@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="google-site-verification" content="OglKha1_ohj4QbWb2g2Ob5lowOpR6PDgrGliTmEBO-o" />
 <title data-i18n="title">NEON 8-BIT · NES 合成器</title>
 <style>
   /* ========== 基础重置 ========== */
@@ -30,6 +31,8 @@
   }
   button { font-family: inherit; cursor: pointer; border: none; background: none; font-weight: bold; }
   input, select { font-family: inherit; font-weight: bold; }
+  select, input[type="range"], input[type="checkbox"] { cursor: pointer; }
+  input[type="text"] { cursor: text; }
 
   /* ========== Y2K 屏幕效果 ========== */
   body::before {
@@ -90,7 +93,7 @@
     left: 50%;
     transform: translateX(-50%);
     width: 100%;
-    max-width: 480px;
+    max-width: 560px;
     height: 100%;
     background:
       radial-gradient(ellipse 90% 45% at 50% -5%, rgba(255, 42, 138, 0.22) 0%, transparent 65%),
@@ -131,7 +134,7 @@
 
   /* ========== 布局 ========== */
   .app {
-    max-width: 480px;
+    max-width: 560px;
     margin: 0 auto;
     padding-left: 12px;
     padding-right: 12px;
@@ -290,6 +293,7 @@
     text-shadow: 0 0 6px var(--neon-green-glow);
   }
   .help-card strong { color: var(--neon-green); text-shadow: 0 0 6px var(--neon-green-glow); }
+  .help-card p:last-child, .help-card ul:last-child { margin-bottom: 0; }
   .help-footer {
     text-align: center;
     padding: 8px 0 12px;
@@ -363,6 +367,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
     margin-bottom: 12px;
     padding-bottom: 8px;
     border-bottom: 1px dashed var(--y2k-gray);
@@ -593,23 +599,23 @@
   .channel-row { margin-bottom: 12px; }
   .channel-head {
     display: grid;
-    grid-template-columns: 34px 1fr;
+    grid-template-columns: 28px 1fr;
     gap: 5px 8px;
     align-items: center;
     margin-bottom: 6px;
   }
   .channel-label {
     grid-row: 1 / span 2;
-    width: 34px;
+    width: 28px;
     height: 100%;
-    min-height: 48px;
+    min-height: 32px;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--y2k-black);
     border: 2px solid var(--y2k-gray);
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 900;
     letter-spacing: 0;
   }
@@ -632,7 +638,7 @@
   }
   .arp-select {
     flex-shrink: 0;
-    width: 52px;
+    width: 60px;
     padding: 3px 4px;
     background: var(--y2k-black);
     border: 2px solid var(--neon-cyan);
@@ -643,7 +649,7 @@
   }
   .vol-select {
     flex-shrink: 0;
-    width: 52px;
+    width: 66px;
     padding: 3px 4px;
     background: var(--y2k-black);
     border: 2px solid var(--neon-yellow);
@@ -654,7 +660,7 @@
   }
   .gate-select {
     flex-shrink: 0;
-    width: 46px;
+    width: 68px;
     padding: 3px 4px;
     background: var(--y2k-black);
     border: 2px solid var(--y2k-gray-light);
@@ -665,7 +671,7 @@
   }
   .vib-select {
     flex-shrink: 0;
-    width: 42px;
+    width: 56px;
     padding: 3px 4px;
     background: var(--y2k-black);
     border: 2px solid var(--neon-purple);
@@ -682,9 +688,10 @@
     align-items: center;
   }
   .ch-field {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
   }
   .ch-field-label {
     font-size: 8px;
@@ -704,13 +711,13 @@
   .step-grid {
     display: grid;
     grid-template-columns: repeat(32, 1fr);
-    gap: 2px;
+    gap: 1px;
   }
   .step-cell {
     aspect-ratio: 1;
     min-width: 0;
     background: var(--y2k-black);
-    border: 1.5px solid var(--y2k-gray);
+    border: 1px solid var(--y2k-gray);
     transition: all 0.05s step-end;
     position: relative;
     font-size: 7px;
@@ -809,7 +816,7 @@
   .param-row:last-child { margin-bottom: 0; }
   .param-label {
     flex-shrink: 0;
-    width: 64px;
+    width: 76px;
     font-size: 9px;
     color: var(--y2k-gray-light);
     font-weight: 900;
@@ -1062,6 +1069,21 @@
   .share-card .meta { font-size: 10px; color: var(--neon-green); font-weight: 900; letter-spacing: 1px; text-shadow: 0 0 6px var(--neon-green-glow); }
   .share-tip { font-size: 9px; color: var(--y2k-gray-light); text-align: center; margin-top: -4px; margin-bottom: 12px; letter-spacing: 0.5px; }
   .share-tip span { background: var(--neon-pink); color: var(--y2k-black); padding: 2px 8px; font-weight: 900; border: 1px solid var(--neon-pink-soft); }
+
+  /* ========== 可访问性与细节 ========== */
+  :focus-visible {
+    outline: 2px solid var(--neon-cyan);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001s !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001s !important;
+    }
+    html { scroll-behavior: auto; }
+  }
 
   /* ========== 响应式 ========== */
   @media (max-width: 360px) {
