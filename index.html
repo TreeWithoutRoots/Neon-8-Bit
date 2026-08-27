@@ -1,0 +1,1459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title data-i18n="title">NEON 8-BIT · NES 合成器</title>
+<style>
+  /* ========== 基础重置 ========== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  html { touch-action: manipulation; }
+  body {
+    font-family: "Courier New", "Consolas", "Monaco", monospace;
+    background: #050505;
+    color: #f8f8f2;
+    overflow-x: hidden;
+    -webkit-font-smoothing: none;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    position: relative;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+  }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; font-weight: bold; }
+  input, select { font-family: inherit; font-weight: bold; }
+
+  /* ========== Y2K 屏幕效果 ========== */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.25) 0px,
+      rgba(0, 0, 0, 0.25) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.7;
+  }
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.08'/%3E%3C/svg%3E");
+    background-size: 128px 128px;
+    pointer-events: none;
+    z-index: 9998;
+    opacity: 0.6;
+    animation: noiseShift 0.3s steps(2) infinite;
+  }
+  @keyframes noiseShift {
+    0% { transform: translate(0, 0); }
+    100% { transform: translate(2px, 1px); }
+  }
+  .vignette {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.6) 100%);
+    pointer-events: none;
+    z-index: 9997;
+  }
+  .bg-grid {
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255, 0, 128, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 0, 128, 0.04) 1px, transparent 1px);
+    background-size: 24px 24px;
+    pointer-events: none;
+    z-index: 0;
+    animation: gridDrift 20s linear infinite;
+  }
+  @keyframes gridDrift {
+    0% { background-position: 0 0; }
+    100% { background-position: 24px 24px; }
+  }
+  .bg-glow {
+    position: fixed;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 480px;
+    height: 100%;
+    background:
+      radial-gradient(ellipse 90% 45% at 50% -5%, rgba(255, 42, 138, 0.22) 0%, transparent 65%),
+      radial-gradient(ellipse 50% 28% at 6% 22%, rgba(176, 38, 255, 0.16) 0%, transparent 65%),
+      radial-gradient(ellipse 45% 25% at 94% 32%, rgba(0, 229, 255, 0.14) 0%, transparent 65%),
+      radial-gradient(ellipse 55% 28% at 14% 72%, rgba(0, 255, 157, 0.13) 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ========== 安全区 ========== */
+  .app {
+    padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+    padding-bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 40px);
+  }
+
+  /* ========== Y2K 霓虹色板 ========== */
+  :root {
+    --y2k-black: #050505;
+    --y2k-dark: #0a0a0f;
+    --y2k-gray: #2a2a3a;
+    --y2k-gray-light: #4a4a5a;
+    --y2k-white: #f8f8f2;
+    --y2k-cream: #e0e0d0;
+    --neon-pink: #ff2a8a;
+    --neon-pink-soft: #ff6bb0;
+    --neon-pink-dark: #cc0066;
+    --neon-pink-glow: rgba(255, 42, 138, 0.6);
+    --neon-pink-glow-soft: rgba(255, 42, 138, 0.2);
+    --neon-green: #00ff9d;
+    --neon-green-soft: #4dffb8;
+    --neon-green-glow: rgba(0, 255, 157, 0.5);
+    --neon-green-glow-soft: rgba(0, 255, 157, 0.15);
+    --neon-cyan: #00e5ff;
+    --neon-purple: #b026ff;
+    --neon-yellow: #fff200;
+  }
+
+  /* ========== 布局 ========== */
+  .app {
+    max-width: 480px;
+    margin: 0 auto;
+    padding-left: 12px;
+    padding-right: 12px;
+    min-height: 100vh;
+    position: relative;
+    z-index: 1;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 4px;
+    border-bottom: 2px solid var(--neon-pink);
+    margin-bottom: 14px;
+    position: relative;
+    box-shadow: 0 2px 8px var(--neon-pink-glow-soft);
+  }
+  .header::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--neon-pink);
+    opacity: 0.5;
+  }
+  .logo { display: flex; align-items: center; gap: 8px; }
+  .logo-icon {
+    font-size: 26px;
+    animation: neonFlicker 3s infinite;
+    filter: drop-shadow(0 0 6px var(--neon-pink-glow));
+  }
+  @keyframes neonFlicker {
+    0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; }
+    20%, 24%, 55% { opacity: 0.5; }
+  }
+  .header h1 {
+    font-size: 18px;
+    font-weight: 900;
+    color: var(--neon-pink);
+    letter-spacing: 2px;
+    text-shadow:
+      0 0 8px var(--neon-pink-glow),
+      0 0 16px var(--neon-pink-glow-soft),
+      2px 2px 0 var(--neon-pink-dark);
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: var(--y2k-dark);
+    border: 2px solid var(--y2k-gray);
+    font-size: 9px;
+    font-weight: 900;
+    color: var(--y2k-gray-light);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .status-pill.playing {
+    color: var(--neon-green);
+    border-color: var(--neon-green);
+    box-shadow: 0 0 8px var(--neon-green-glow), inset 0 0 8px var(--neon-green-glow-soft);
+  }
+  .status-dot { width: 7px; height: 7px; background: var(--y2k-gray-light); }
+  .status-pill.playing .status-dot {
+    background: var(--neon-green);
+    animation: neonBlink 0.6s step-end infinite;
+    box-shadow: 0 0 8px var(--neon-green-glow);
+  }
+  @keyframes neonBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .header-right { display: flex; align-items: center; gap: 8px; }
+  .lang-toggle {
+    padding: 5px 8px;
+    font-size: 10px;
+    font-weight: 900;
+    color: var(--y2k-white);
+    background: var(--y2k-dark);
+    border: 2px solid var(--y2k-gray);
+    letter-spacing: 1px;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+  .lang-toggle:active { transform: translate(1px, 1px); border-color: var(--neon-green); color: var(--neon-green); }
+
+  .tab-bar { display: flex; gap: 8px; margin: 0 4px 14px; }
+  .tab-btn {
+    flex: 1;
+    padding: 9px 6px;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--y2k-gray-light);
+    background: var(--y2k-dark);
+    border: 2px solid var(--y2k-gray);
+    transition: all 0.08s step-end;
+  }
+  .tab-btn.active {
+    color: var(--y2k-black);
+    background: var(--neon-pink);
+    border-color: var(--neon-pink-soft);
+    box-shadow: 0 0 10px var(--neon-pink-glow);
+  }
+  .tab-btn:active { transform: translate(1px, 1px); }
+  .app-view[hidden] { display: none; }
+
+  .help-card {
+    background: var(--y2k-dark);
+    border: 2px solid var(--y2k-gray);
+    padding: 14px;
+    margin-bottom: 12px;
+    position: relative;
+  }
+  .help-card::before, .help-card::after {
+    content: '';
+    position: absolute;
+    width: 6px; height: 6px;
+    background: var(--neon-green);
+    box-shadow: 0 0 6px var(--neon-green-glow);
+  }
+  .help-card::before { top: -3px; left: -3px; }
+  .help-card::after { bottom: -3px; right: -3px; }
+  .help-card h2 {
+    font-size: 16px;
+    font-weight: 900;
+    color: var(--neon-pink);
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+    text-shadow: 0 0 10px var(--neon-pink-glow), 2px 2px 0 var(--neon-pink-dark);
+  }
+  .help-card p {
+    font-size: 11px;
+    color: var(--y2k-cream);
+    line-height: 1.9;
+    letter-spacing: 0.3px;
+    margin-bottom: 8px;
+  }
+  .help-card ul { list-style: none; padding: 0; margin: 0 0 8px; }
+  .help-card li {
+    font-size: 11px;
+    color: var(--y2k-cream);
+    line-height: 1.9;
+    letter-spacing: 0.3px;
+    padding-left: 16px;
+    position: relative;
+  }
+  .help-card li::before {
+    content: '\203A';
+    position: absolute;
+    left: 0;
+    color: var(--neon-green);
+    text-shadow: 0 0 6px var(--neon-green-glow);
+  }
+  .help-card strong { color: var(--neon-green); text-shadow: 0 0 6px var(--neon-green-glow); }
+  .help-footer {
+    text-align: center;
+    padding: 8px 0 12px;
+    font-size: 9px;
+    color: var(--y2k-gray-light);
+    letter-spacing: 1px;
+  }
+
+  .hero {
+    background: var(--y2k-dark);
+    border: 2px solid var(--neon-pink);
+    padding: 14px;
+    margin-bottom: 14px;
+    position: relative;
+    box-shadow: 0 0 16px var(--neon-pink-glow-soft), inset 0 0 20px rgba(255, 42, 138, 0.05);
+  }
+  .hero-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    background: var(--neon-pink);
+    color: var(--y2k-black);
+    font-size: 9px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    border: 2px solid var(--neon-pink-soft);
+    box-shadow: 0 0 10px var(--neon-pink-glow), inset 0 0 6px rgba(255, 255, 255, 0.15);
+  }
+  .hero h2 {
+    font-size: 17px;
+    font-weight: 900;
+    margin-bottom: 8px;
+    color: var(--neon-pink);
+    letter-spacing: 1px;
+    text-shadow: 0 0 10px var(--neon-pink-glow), 2px 2px 0 var(--neon-pink-dark);
+  }
+  .hero p {
+    font-size: 11px;
+    color: var(--y2k-cream);
+    line-height: 1.8;
+    letter-spacing: 0.5px;
+  }
+  .hero p strong { color: var(--neon-green); text-shadow: 0 0 6px var(--neon-green-glow); }
+
+  /* ========== 卡片 ========== */
+  .card {
+    background: var(--y2k-dark);
+    border: 2px solid var(--y2k-gray);
+    padding: 12px;
+    margin-bottom: 12px;
+    position: relative;
+    animation: slideIn 0.3s ease-out both;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-6px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  .card::before, .card::after {
+    content: '';
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    background: var(--neon-pink);
+    box-shadow: 0 0 6px var(--neon-pink-glow);
+  }
+  .card::before { top: -3px; left: -3px; }
+  .card::after { bottom: -3px; right: -3px; }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--y2k-gray);
+  }
+  .card-title {
+    font-size: 12px;
+    font-weight: 900;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--neon-pink);
+    letter-spacing: 1.5px;
+    text-shadow: 0 0 8px var(--neon-pink-glow);
+  }
+  .card-subtitle {
+    font-size: 9px;
+    color: var(--y2k-black);
+    font-weight: 900;
+    background: var(--neon-green);
+    padding: 3px 8px;
+    border: 2px solid var(--neon-green-soft);
+    letter-spacing: 1px;
+    box-shadow: 0 0 8px var(--neon-green-glow);
+  }
+
+  /* ========== 播放控制 ========== */
+  .transport { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; }
+  .btn {
+    padding: 11px 6px;
+    font-size: 11px;
+    font-weight: 900;
+    transition: all 0.08s step-end;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    position: relative;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border: 2px solid;
+    color: var(--y2k-white);
+  }
+  .btn:active { transform: translate(2px, 2px); }
+  .btn-primary {
+    background: var(--neon-pink);
+    border-color: var(--neon-pink-soft);
+    color: var(--y2k-black);
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.3);
+    box-shadow: 0 0 12px var(--neon-pink-glow), inset 0 0 8px rgba(255, 255, 255, 0.15);
+  }
+  .btn-primary.playing {
+    background: var(--y2k-gray);
+    border-color: var(--y2k-gray-light);
+    color: var(--y2k-cream);
+    box-shadow: none;
+    text-shadow: none;
+  }
+  .btn-secondary {
+    background: transparent;
+    border-color: var(--neon-green);
+    color: var(--neon-green);
+    box-shadow: 0 0 8px var(--neon-green-glow-soft), inset 0 0 6px var(--neon-green-glow-soft);
+  }
+  .btn-secondary:active { background: var(--neon-green); color: var(--y2k-black); box-shadow: 0 0 12px var(--neon-green-glow); }
+  .btn-warm {
+    background: transparent;
+    border-color: var(--neon-purple);
+    color: var(--neon-purple);
+    box-shadow: 0 0 8px rgba(176, 38, 255, 0.2), inset 0 0 6px rgba(176, 38, 255, 0.15);
+  }
+  .btn-warm:active { background: var(--neon-purple); color: var(--y2k-white); }
+
+  /* 随机风格选择 */
+  .style-row {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--y2k-gray);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .mode-label {
+    flex-shrink: 0;
+    font-size: 9px;
+    color: var(--y2k-gray-light);
+    font-weight: 900;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .style-select {
+    flex: 1;
+    padding: 6px 10px;
+    background: var(--y2k-black);
+    border: 2px solid var(--y2k-gray);
+    color: var(--neon-green);
+    font-size: 11px;
+    font-weight: 900;
+    outline: none;
+    letter-spacing: 0.5px;
+  }
+  .style-select:focus { border-color: var(--neon-pink); box-shadow: 0 0 8px var(--neon-pink-glow-soft); }
+
+  /* 单段循环开关 */
+  .loop-row {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--y2k-gray);
+    display: flex;
+    align-items: center;
+  }
+  .loop-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 10px;
+  }
+  .loop-toggle input { accent-color: var(--neon-green); width: 15px; height: 15px; cursor: pointer; }
+  .loop-toggle-label {
+    font-weight: 900;
+    color: var(--neon-green);
+    letter-spacing: 1px;
+    text-shadow: 0 0 6px var(--neon-green-glow);
+  }
+  .loop-toggle-hint {
+    font-size: 9px;
+    color: var(--y2k-gray-light);
+    font-weight: 700;
+  }
+
+  .bpm-section {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--y2k-gray);
+  }
+  .bpm-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--y2k-gray-light);
+    margin-bottom: 8px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .bpm-value {
+    padding: 4px 12px;
+    background: var(--y2k-black);
+    color: var(--neon-green);
+    font-weight: 900;
+    font-size: 12px;
+    border: 2px solid var(--neon-green);
+    text-shadow: 0 0 8px var(--neon-green-glow);
+    letter-spacing: 1px;
+    box-shadow: 0 0 10px var(--neon-green-glow-soft), inset 0 0 8px var(--neon-green-glow-soft);
+  }
+  .bpm-slider {
+    width: 100%;
+    height: 10px;
+    background: var(--y2k-black);
+    -webkit-appearance: none;
+    appearance: none;
+    outline: none;
+    border: 2px solid var(--y2k-gray);
+  }
+  .bpm-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: var(--neon-pink);
+    cursor: pointer;
+    border: 2px solid var(--neon-pink-soft);
+    box-shadow: 0 0 10px var(--neon-pink-glow), inset 0 0 4px rgba(255, 255, 255, 0.2);
+  }
+  .bpm-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: var(--neon-pink);
+    border: 2px solid var(--neon-pink);
+    cursor: pointer;
+    box-shadow: 0 0 8px var(--neon-pink-glow);
+  }
+
+  /* ========== 音序器 ========== */
+  .pattern-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .pattern-chip {
+    padding: 5px 10px;
+    font-size: 9px;
+    font-weight: 900;
+    background: transparent;
+    color: var(--y2k-gray-light);
+    border: 2px solid var(--y2k-gray);
+    letter-spacing: 0.5px;
+  }
+  .pattern-chip.active {
+    background: var(--neon-pink);
+    color: var(--y2k-black);
+    border-color: var(--neon-pink-soft);
+    box-shadow: 0 0 8px var(--neon-pink-glow);
+  }
+  .pattern-chip.playing {
+    border-color: var(--neon-green);
+    color: var(--neon-green);
+    box-shadow: 0 0 8px var(--neon-green-glow-soft);
+  }
+  .pattern-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .mini-btn {
+    padding: 4px 8px;
+    font-size: 9px;
+    font-weight: 900;
+    transition: all 0.08s step-end;
+    border: 2px solid;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .mini-btn:active { transform: translate(1px, 1px); }
+  .mini-btn.new { background: var(--neon-green); color: var(--y2k-black); border-color: var(--neon-green-soft); box-shadow: 0 0 6px var(--neon-green-glow); }
+  .mini-btn.dup { background: transparent; color: var(--neon-cyan); border-color: var(--neon-cyan); }
+  .mini-btn.del { background: transparent; color: var(--neon-pink); border-color: var(--neon-pink); }
+
+  .channel-row { margin-bottom: 12px; }
+  .channel-head {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 5px 8px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .channel-label {
+    grid-row: 1 / span 2;
+    width: 34px;
+    height: 100%;
+    min-height: 48px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--y2k-black);
+    border: 2px solid var(--y2k-gray);
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0;
+  }
+  .channel-label.ch-0 { color: var(--neon-pink); border-color: var(--neon-pink-soft); box-shadow: 0 0 6px var(--neon-pink-glow-soft); }
+  .channel-label.ch-1 { color: var(--neon-purple); border-color: #d27fff; box-shadow: 0 0 6px rgba(176, 38, 255, 0.3); }
+  .channel-label.ch-2 { color: var(--neon-cyan); border-color: #66ffff; box-shadow: 0 0 6px rgba(0, 229, 255, 0.3); }
+  .channel-label.ch-3 { color: var(--neon-green); border-color: var(--neon-green-soft); box-shadow: 0 0 6px var(--neon-green-glow-soft); }
+
+  .pitch-select {
+    grid-column: 2;
+    width: 100%;
+    max-width: none;
+    padding: 4px 6px;
+    background: var(--y2k-black);
+    border: 2px solid var(--y2k-gray);
+    color: var(--neon-green);
+    font-size: 10px;
+    outline: none;
+    letter-spacing: 0.5px;
+  }
+  .arp-select {
+    flex-shrink: 0;
+    width: 52px;
+    padding: 3px 4px;
+    background: var(--y2k-black);
+    border: 2px solid var(--neon-cyan);
+    color: var(--neon-cyan);
+    font-size: 9px;
+    outline: none;
+    letter-spacing: 0.5px;
+  }
+  .vol-select {
+    flex-shrink: 0;
+    width: 52px;
+    padding: 3px 4px;
+    background: var(--y2k-black);
+    border: 2px solid var(--neon-yellow);
+    color: var(--neon-yellow);
+    font-size: 9px;
+    outline: none;
+    letter-spacing: 0.5px;
+  }
+  .gate-select {
+    flex-shrink: 0;
+    width: 46px;
+    padding: 3px 4px;
+    background: var(--y2k-black);
+    border: 2px solid var(--y2k-gray-light);
+    color: var(--y2k-white);
+    font-size: 9px;
+    outline: none;
+    letter-spacing: 0.5px;
+  }
+  .vib-select {
+    flex-shrink: 0;
+    width: 42px;
+    padding: 3px 4px;
+    background: var(--y2k-black);
+    border: 2px solid var(--neon-purple);
+    color: var(--neon-purple);
+    font-size: 9px;
+    outline: none;
+    letter-spacing: 0.5px;
+  }
+  .ch-controls {
+    grid-column: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    align-items: center;
+  }
+  .ch-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .ch-field-label {
+    font-size: 8px;
+    color: var(--y2k-gray-light);
+    font-weight: 900;
+    letter-spacing: 0.5px;
+  }
+  /* 时值延续格：更暗、显示横线 */
+  .step-cell.gate-hold {
+    opacity: 0.45;
+  }
+  /* 颤音音符：紫色发光边框 */
+  .step-cell.active.has-vib {
+    box-shadow: 0 0 0 1px var(--neon-purple), 0 0 8px rgba(176, 38, 255, 0.7);
+  }
+
+  .step-grid {
+    display: grid;
+    grid-template-columns: repeat(32, 1fr);
+    gap: 2px;
+  }
+  .step-cell {
+    aspect-ratio: 1;
+    min-width: 0;
+    background: var(--y2k-black);
+    border: 1.5px solid var(--y2k-gray);
+    transition: all 0.05s step-end;
+    position: relative;
+    font-size: 7px;
+    color: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .step-cell:active { transform: scale(0.85); }
+
+  .step-cell.active.ch-0 { background: var(--neon-pink); border-color: var(--neon-pink-soft); color: var(--y2k-black); box-shadow: 0 0 6px var(--neon-pink-glow), inset 0 0 4px rgba(255, 255, 255, 0.2); }
+  .step-cell.active.ch-1 { background: var(--neon-purple); border-color: #d27fff; color: var(--y2k-black); box-shadow: 0 0 6px rgba(176, 38, 255, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
+  .step-cell.active.ch-2 { background: var(--neon-cyan); border-color: #66ffff; color: var(--y2k-black); box-shadow: 0 0 6px rgba(0, 229, 255, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
+  .step-cell.active.ch-3 { background: var(--neon-green); border-color: var(--neon-green-soft); color: var(--y2k-black); box-shadow: 0 0 6px var(--neon-green-glow), inset 0 0 4px rgba(255, 255, 255, 0.2); }
+  /* 琶音音符：发光脉冲边框 */
+  .step-cell.active.has-arp {
+    color: var(--y2k-white);
+    text-shadow: 0 0 4px var(--y2k-white);
+    animation: arpPulse 0.5s step-end infinite alternate;
+  }
+  @keyframes arpPulse {
+    from { filter: brightness(1); }
+    to { filter: brightness(1.5); }
+  }
+
+  .step-cell.current {
+    transform: scale(1.1);
+    z-index: 3;
+    border-color: var(--neon-yellow);
+    box-shadow: 0 0 0 2px var(--neon-yellow), 0 0 12px var(--neon-yellow);
+  }
+
+  .track-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--y2k-gray);
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    color: var(--y2k-gray-light);
+    font-weight: 900;
+    letter-spacing: 0.5px;
+  }
+  .legend-dot { width: 9px; height: 9px; border: 1.5px solid rgba(255, 255, 255, 0.3); }
+  .legend-dot.ch-0 { background: var(--neon-pink); box-shadow: 0 0 4px var(--neon-pink-glow); }
+  .legend-dot.ch-1 { background: var(--neon-purple); box-shadow: 0 0 4px rgba(176, 38, 255, 0.5); }
+  .legend-dot.ch-2 { background: var(--neon-cyan); box-shadow: 0 0 4px rgba(0, 229, 255, 0.5); }
+  .legend-dot.ch-3 { background: var(--neon-green); box-shadow: 0 0 4px var(--neon-green-glow); }
+
+  /* ========== 参数面板 ========== */
+  .param-card {
+    background: var(--y2k-black);
+    border: 2px solid var(--y2k-gray);
+    margin-bottom: 8px;
+  }
+  .param-summary {
+    display: flex;
+    align-items: center;
+    padding: 8px 10px;
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    color: var(--y2k-cream);
+    list-style: none;
+    outline: none;
+  }
+  .param-summary::-webkit-details-marker { display: none; }
+  .param-summary::before {
+    content: '▸';
+    margin-right: 8px;
+    color: var(--neon-pink);
+  }
+  .param-card[open] .param-summary::before { content: '▾'; }
+  .param-channel { margin-left: 6px; font-size: 9px; }
+  .param-channel.ch-0 { color: var(--neon-pink); }
+  .param-channel.ch-1 { color: var(--neon-purple); }
+  .param-channel.ch-2 { color: var(--neon-cyan); }
+  .param-channel.ch-3 { color: var(--neon-green); }
+
+  .param-body { padding: 8px 10px 12px; border-top: 1px dashed var(--y2k-gray); }
+  .param-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    min-height: 26px;
+  }
+  .param-row:last-child { margin-bottom: 0; }
+  .param-label {
+    flex-shrink: 0;
+    width: 64px;
+    font-size: 9px;
+    color: var(--y2k-gray-light);
+    font-weight: 900;
+    letter-spacing: 0.5px;
+  }
+  .param-btns { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+  .seg-btn {
+    padding: 4px 8px;
+    font-size: 9px;
+    font-weight: 900;
+    background: transparent;
+    color: var(--y2k-gray-light);
+    border: 2px solid var(--y2k-gray);
+    letter-spacing: 0.5px;
+    transition: all 0.08s step-end;
+  }
+  .seg-btn.active {
+    background: var(--neon-pink);
+    color: var(--y2k-black);
+    border-color: var(--neon-pink-soft);
+    box-shadow: 0 0 8px var(--neon-pink-glow);
+  }
+  .param-range {
+    flex: 1;
+    height: 8px;
+    background: var(--y2k-black);
+    -webkit-appearance: none;
+    appearance: none;
+    outline: none;
+    border: 2px solid var(--y2k-gray);
+  }
+  .param-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--neon-green);
+    cursor: pointer;
+    border: 2px solid var(--neon-green-soft);
+  }
+  .param-value {
+    flex-shrink: 0;
+    min-width: 40px;
+    text-align: center;
+    font-size: 10px;
+    color: var(--neon-green);
+    font-weight: 900;
+  }
+  .param-note { font-size: 9px; color: var(--y2k-gray-light); line-height: 1.6; }
+  .sweep-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 9px;
+    color: var(--y2k-cream);
+    cursor: pointer;
+  }
+  .sweep-toggle input { accent-color: var(--neon-pink); }
+
+  /* ========== 编排条 ========== */
+  .order-bar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .order-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    background: var(--y2k-black);
+    border: 2px solid var(--y2k-gray);
+  }
+  .order-item.loop { border-color: var(--neon-green); box-shadow: 0 0 6px var(--neon-green-glow-soft); }
+  .order-item.selected { border-color: var(--neon-pink); box-shadow: 0 0 6px var(--neon-pink-glow-soft); }
+  .order-item.playing { border-color: var(--neon-yellow); box-shadow: 0 0 6px rgba(255, 242, 0, 0.5); }
+  .order-name { font-size: 9px; font-weight: 900; color: var(--y2k-cream); }
+  .order-tag {
+    font-size: 7px;
+    font-weight: 900;
+    padding: 1px 4px;
+    letter-spacing: 0;
+  }
+  .order-tag.loop-start { background: var(--neon-green); color: var(--y2k-black); }
+  .order-tag.loop-end { background: var(--neon-pink); color: var(--y2k-black); }
+  .order-btn {
+    padding: 2px 5px;
+    font-size: 10px;
+    color: var(--y2k-gray-light);
+    border: 1px solid var(--y2k-gray);
+    line-height: 1;
+  }
+  .order-btn.del { color: var(--neon-pink); border-color: var(--neon-pink); }
+  .order-toolbar { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* ========== 预设 ========== */
+  .preset-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .preset-btn {
+    padding: 7px 3px;
+    font-size: 9px;
+    font-weight: 900;
+    transition: all 0.08s step-end;
+    background: transparent;
+    color: var(--y2k-gray-light);
+    border: 2px solid var(--y2k-gray);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .preset-btn:active { transform: translate(1px, 1px); }
+  .preset-btn.classic { background: var(--neon-pink); color: var(--y2k-black); border-color: var(--neon-pink-soft); box-shadow: 0 0 8px var(--neon-pink-glow); }
+  .preset-btn.victory { background: var(--neon-green); color: var(--y2k-black); border-color: var(--neon-green-soft); box-shadow: 0 0 8px var(--neon-green-glow); }
+
+  .toast {
+    margin-left: auto;
+    font-size: 9px;
+    color: var(--neon-green);
+    font-weight: 900;
+    opacity: 0;
+    transition: opacity 0.15s step-end;
+    min-width: 40px;
+    text-align: right;
+    letter-spacing: 0.5px;
+    text-shadow: 0 0 6px var(--neon-green-glow);
+  }
+  .toast.show { opacity: 1; }
+
+  /* ========== 存档库 ========== */
+  .library-empty {
+    text-align: center;
+    padding: 18px 14px;
+    background: var(--y2k-black);
+    border: 2px dashed var(--y2k-gray);
+  }
+  .library-empty p { font-size: 10px; color: var(--y2k-gray-light); line-height: 1.8; letter-spacing: 0.5px; }
+  .library-empty .emoji { font-size: 28px; margin-bottom: 6px; filter: drop-shadow(0 0 8px var(--neon-pink-glow)); }
+  .library-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-right: 4px; overscroll-behavior-y: contain; }
+  .library-list::-webkit-scrollbar { width: 6px; }
+  .library-list::-webkit-scrollbar-thumb { background: var(--neon-pink); box-shadow: 0 0 4px var(--neon-pink-glow); }
+  .library-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    background: var(--y2k-black);
+    border: 2px solid var(--y2k-gray);
+    transition: all 0.08s step-end;
+  }
+  .library-item-info { min-width: 0; flex: 1; }
+  .library-item-name {
+    font-size: 11px;
+    font-weight: 900;
+    color: var(--neon-pink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: 0.5px;
+    text-shadow: 0 0 6px var(--neon-pink-glow);
+  }
+  .library-item-date { font-size: 9px; color: var(--y2k-gray-light); margin-top: 3px; }
+  .library-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .mini-btn.load { background: var(--neon-green); color: var(--y2k-black); border-color: var(--neon-green-soft); box-shadow: 0 0 6px var(--neon-green-glow); }
+  .mini-btn.delete { background: transparent; color: var(--neon-pink); border-color: var(--neon-pink); }
+
+  /* 保存面板 */
+  .save-panel {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--y2k-gray);
+    display: none;
+    gap: 8px;
+    animation: panelIn 0.2s step-end;
+  }
+  .save-panel.show { display: flex; }
+  @keyframes panelIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  .save-input {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--y2k-black);
+    border: 2px solid var(--y2k-gray);
+    font-size: 11px;
+    outline: none;
+    color: var(--neon-green);
+    font-weight: 900;
+    letter-spacing: 0.5px;
+  }
+  .save-input:focus { border-color: var(--neon-pink); box-shadow: 0 0 8px var(--neon-pink-glow-soft); }
+
+  .footer {
+    text-align: center;
+    padding: 18px 0 8px;
+    font-size: 9px;
+    color: var(--y2k-gray-light);
+    font-weight: 900;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+  .footer .heart { color: var(--neon-pink); display: inline-block; animation: pixelHeart 1.2s step-end infinite; text-shadow: 0 0 6px var(--neon-pink-glow); }
+  @keyframes pixelHeart { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.2); } }
+
+  /* ========== 模态框 ========== */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 24px;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--y2k-dark);
+    border: 2px solid var(--neon-pink);
+    padding: 18px 14px;
+    width: 100%;
+    max-width: 320px;
+    box-shadow: 0 0 30px var(--neon-pink-glow-soft), inset 0 0 30px rgba(255, 42, 138, 0.05);
+    animation: modalPop 0.2s step-end;
+    position: relative;
+  }
+  @keyframes modalPop { 0% { opacity: 0; transform: scale(0.8); } 50% { transform: scale(1.05); } 100% { opacity: 1; transform: scale(1); } }
+  .modal h3 {
+    font-size: 15px;
+    font-weight: 900;
+    margin-bottom: 8px;
+    text-align: center;
+    color: var(--neon-pink);
+    letter-spacing: 1px;
+    text-shadow: 0 0 10px var(--neon-pink-glow), 2px 2px 0 var(--neon-pink-dark);
+  }
+  .modal p { font-size: 10px; color: var(--y2k-cream); text-align: center; margin-bottom: 12px; line-height: 1.8; letter-spacing: 0.5px; }
+  .modal-actions { display: flex; gap: 8px; }
+  .modal-actions .btn { padding: 10px; }
+  .share-card {
+    background: var(--y2k-black);
+    border: 2px solid var(--neon-green);
+    padding: 18px 14px;
+    text-align: center;
+    margin-bottom: 14px;
+    position: relative;
+    box-shadow: 0 0 20px var(--neon-green-glow-soft), inset 0 0 20px var(--neon-green-glow-soft);
+  }
+  .share-card .emoji { font-size: 44px; margin-bottom: 8px; animation: iconBounce 0.8s step-end infinite; display: inline-block; filter: drop-shadow(0 0 12px var(--neon-pink-glow)); }
+  @keyframes iconBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+  .share-card .name {
+    font-size: 18px;
+    font-weight: 900;
+    color: var(--neon-pink);
+    margin-bottom: 6px;
+    letter-spacing: 2px;
+    text-shadow: 0 0 10px var(--neon-pink-glow), 2px 2px 0 var(--neon-pink-dark);
+  }
+  .share-card .meta { font-size: 10px; color: var(--neon-green); font-weight: 900; letter-spacing: 1px; text-shadow: 0 0 6px var(--neon-green-glow); }
+  .share-tip { font-size: 9px; color: var(--y2k-gray-light); text-align: center; margin-top: -4px; margin-bottom: 12px; letter-spacing: 0.5px; }
+  .share-tip span { background: var(--neon-pink); color: var(--y2k-black); padding: 2px 8px; font-weight: 900; border: 1px solid var(--neon-pink-soft); }
+
+  /* ========== 响应式 ========== */
+  @media (max-width: 360px) {
+    .app { padding-left: 8px; padding-right: 8px; }
+    .hero h2 { font-size: 15px; }
+    .btn { padding: 10px 4px; font-size: 10px; }
+    .header h1 { font-size: 15px; }
+    .transport { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 背景层 -->
+<div class="bg-glow"></div>
+<div class="bg-grid"></div>
+<div class="vignette"></div>
+
+<div class="app">
+  <!-- 顶部标题 -->
+  <div class="header">
+    <div class="logo">
+      <span class="logo-icon">💜</span>
+      <h1>NEON 8-BIT</h1>
+    </div>
+    <div class="header-right">
+      <button class="lang-toggle" id="langToggle" type="button">EN</button>
+      <div class="status-pill" id="statusPill">
+        <span class="status-dot"></span>
+        <span id="statusText">待机</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 标签页 -->
+  <div class="tab-bar" id="tabBar">
+    <button class="tab-btn active" id="tabSynth" type="button" data-i18n="tab.synth"></button>
+    <button class="tab-btn" id="tabHelp" type="button" data-i18n="tab.help"></button>
+  </div>
+
+  <div id="viewSynth" class="app-view">
+
+  <!-- 介绍 -->
+  <div class="hero">
+    <span class="hero-badge">NES 2A03 APU</span>
+    <h2 data-i18n="hero.title">点格子，写芯片音乐！</h2>
+    <p data-i18n-html="hero.desc">还原 FC 红白机四声道：<strong>P1/P2 方波</strong>（占空比+扫频）· <strong>TRI 三角波</strong>低音 · <strong>NSE 噪声</strong>鼓点<br />多段编排，奏响你的 8-bit 游戏旋律～</p>
+  </div>
+
+  <!-- 播放控制 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title" data-i18n="panel.control">▶ 控制面板</span>
+    </div>
+    <div class="transport">
+      <button class="btn btn-primary" id="playBtn">▶ PLAY</button>
+      <button class="btn btn-secondary" id="saveBtn">💾 SAVE</button>
+      <button class="btn btn-warm" id="randomBtn">✦ RANDOM</button>
+      <button class="btn btn-secondary" id="clearBtn">✕ CLEAR</button>
+    </div>
+    <div class="loop-row">
+      <label class="loop-toggle">
+        <input type="checkbox" id="singleLoopToggle" />
+        <span class="loop-toggle-label" data-i18n="loop.single">↺ 单段循环</span>
+        <span class="loop-toggle-hint" data-i18n="loop.hint">只播当前选中段</span>
+      </label>
+    </div>
+    <div class="save-panel" id="savePanel">
+      <input type="text" class="save-input" id="saveInput" placeholder="输入名称" data-i18n-placeholder="save.placeholder" maxlength="20" />
+      <button class="btn btn-primary" style="flex: 0 0 auto; padding: 8px 14px;" id="confirmSaveBtn" data-i18n="save.confirm">确认</button>
+    </div>
+    <div class="style-row">
+      <span class="mode-label" data-i18n="random.label">随机风格</span>
+      <select id="randomStyleSelect" class="style-select">
+        <option value="auto" data-i18n="random.auto">✨ 随机</option>
+        <option value="classic" data-i18n="random.classic">经典流行</option>
+        <option value="debussy" data-i18n="random.debussy">德彪西</option>
+        <option value="michael_jackson" data-i18n="random.mj">迈克尔杰克逊</option>
+      </select>
+    </div>
+    <div class="bpm-section">
+      <div class="bpm-label">
+        <span>SLOW</span>
+        <span class="bpm-value" id="bpmValue">140 BPM</span>
+        <span>FAST</span>
+      </div>
+      <input type="range" class="bpm-slider" id="bpmSlider" min="60" max="180" value="140" step="1" />
+    </div>
+  </div>
+
+  <!-- 音序器 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title" data-i18n="panel.sequencer">♪ 音序器</span>
+      <span class="card-subtitle" data-i18n="seq.count">4 声道 × 32</span>
+    </div>
+    <div class="pattern-tabs" id="patternTabs"></div>
+    <div class="pattern-toolbar">
+      <button class="mini-btn new" id="addPatternBtn" data-i18n="seq.addPattern">＋ 段落</button>
+      <button class="mini-btn dup" id="dupPatternBtn" data-i18n="seq.dup">⧉ 复制</button>
+      <button class="mini-btn del" id="delPatternBtn" data-i18n="seq.del">✕ 删除</button>
+      <button class="mini-btn dup" id="renamePatternBtn" data-i18n="seq.rename">✎ 重命名</button>
+    </div>
+    <div id="tracks"></div>
+    <div class="track-legend">
+      <div class="legend-item"><span class="legend-dot ch-0"></span><span data-i18n="legend.p1">P1 方波</span></div>
+      <div class="legend-item"><span class="legend-dot ch-1"></span><span data-i18n="legend.p2">P2 方波</span></div>
+      <div class="legend-item"><span class="legend-dot ch-2"></span><span data-i18n="legend.tri">TRI 三角</span></div>
+      <div class="legend-item"><span class="legend-dot ch-3"></span><span data-i18n="legend.nse">NSE 噪声</span></div>
+    </div>
+  </div>
+
+  <!-- 声道参数 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title" data-i18n="panel.params">⚙ 声道参数</span>
+    </div>
+
+    <details class="param-card">
+      <summary class="param-summary" data-i18n-html="param.square1">方波声道 <span class="param-channel ch-0">P1</span></summary>
+      <div class="param-body">
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.duty">占空比</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="duty" data-channel="0" data-value="0">12.5%</button>
+            <button class="seg-btn" data-param="duty" data-channel="0" data-value="1">25%</button>
+            <button class="seg-btn" data-param="duty" data-channel="0" data-value="2">50%</button>
+            <button class="seg-btn" data-param="duty" data-channel="0" data-value="3">75%</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.volume">音量</span>
+          <input type="range" class="param-range" data-param="vol" data-channel="0" min="0" max="15" value="12" id="vol_0" />
+          <span class="param-value" id="volLabel_0">12</span>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.envelope">包络</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="envMode" data-channel="0" data-value="const" data-i18n="param.env.const">恒定</button>
+            <button class="seg-btn" data-param="envMode" data-channel="0" data-value="decay" data-i18n="param.env.decay">衰减</button>
+            <button class="seg-btn" data-param="envMode" data-channel="0" data-value="loop" data-i18n="param.env.loop">循环</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <label class="sweep-toggle"><input type="checkbox" data-param="sweepOn" data-channel="0" id="sweepOn_0" /> <span data-i18n="param.sweep">频率扫频</span></label>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepPeriod">扫频周期</span>
+          <input type="range" class="param-range" data-param="sweepPeriod" data-channel="0" min="0" max="7" value="0" id="sweepPeriod_0" />
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepDir">扫频方向</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="sweepNegate" data-channel="0" data-value="0" data-i18n="param.sweep.down">降</button>
+            <button class="seg-btn" data-param="sweepNegate" data-channel="0" data-value="1" data-i18n="param.sweep.up">升</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepShift">扫频移位</span>
+          <input type="range" class="param-range" data-param="sweepShift" data-channel="0" min="0" max="7" value="0" id="sweepShift_0" />
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.glide">滑音时间</span>
+          <input type="range" class="param-range" data-param="glideTime" data-channel="0" min="0" max="100" value="0" id="glideTime_0" />
+          <span class="param-value" id="glideTimeLabel_0">0 ms</span>
+        </div>
+        <div class="param-row">
+          <p class="param-note" data-i18n="param.glideNote">滑音：从前一个音符平滑过渡到当前音符，时间越长过渡越慢。</p>
+        </div>
+      </div>
+    </details>
+
+    <details class="param-card">
+      <summary class="param-summary" data-i18n-html="param.square2">方波声道 <span class="param-channel ch-1">P2</span></summary>
+      <div class="param-body">
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.duty">占空比</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="duty" data-channel="1" data-value="0">12.5%</button>
+            <button class="seg-btn" data-param="duty" data-channel="1" data-value="1">25%</button>
+            <button class="seg-btn" data-param="duty" data-channel="1" data-value="2">50%</button>
+            <button class="seg-btn" data-param="duty" data-channel="1" data-value="3">75%</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.volume">音量</span>
+          <input type="range" class="param-range" data-param="vol" data-channel="1" min="0" max="15" value="10" id="vol_1" />
+          <span class="param-value" id="volLabel_1">10</span>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.envelope">包络</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="envMode" data-channel="1" data-value="const" data-i18n="param.env.const">恒定</button>
+            <button class="seg-btn" data-param="envMode" data-channel="1" data-value="decay" data-i18n="param.env.decay">衰减</button>
+            <button class="seg-btn" data-param="envMode" data-channel="1" data-value="loop" data-i18n="param.env.loop">循环</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <label class="sweep-toggle"><input type="checkbox" data-param="sweepOn" data-channel="1" id="sweepOn_1" /> <span data-i18n="param.sweep">频率扫频</span></label>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepPeriod">扫频周期</span>
+          <input type="range" class="param-range" data-param="sweepPeriod" data-channel="1" min="0" max="7" value="0" id="sweepPeriod_1" />
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepDir">扫频方向</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="sweepNegate" data-channel="1" data-value="0" data-i18n="param.sweep.down">降</button>
+            <button class="seg-btn" data-param="sweepNegate" data-channel="1" data-value="1" data-i18n="param.sweep.up">升</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepShift">扫频移位</span>
+          <input type="range" class="param-range" data-param="sweepShift" data-channel="1" min="0" max="7" value="0" id="sweepShift_1" />
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.glide">滑音时间</span>
+          <input type="range" class="param-range" data-param="glideTime" data-channel="1" min="0" max="100" value="0" id="glideTime_1" />
+          <span class="param-value" id="glideTimeLabel_1">0 ms</span>
+        </div>
+        <div class="param-row">
+          <p class="param-note" data-i18n="param.glideNote">滑音：从前一个音符平滑过渡到当前音符，时间越长过渡越慢。</p>
+        </div>
+      </div>
+    </details>
+
+    <details class="param-card">
+      <summary class="param-summary" data-i18n-html="param.triangle">三角波声道 <span class="param-channel ch-2">TRI</span></summary>
+      <div class="param-body">
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.glide">滑音时间</span>
+          <input type="range" class="param-range" data-param="glideTime" data-channel="2" min="0" max="100" value="0" id="glideTime_2" />
+          <span class="param-value" id="glideTimeLabel_2">0 ms</span>
+        </div>
+        <div class="param-row">
+          <p class="param-note" data-i18n="param.triNote">三角波无音量控制，仅开关。同一音高比方波低一个八度，适合低音线。滑音：从前一个音符平滑过渡到当前音符。</p>
+        </div>
+      </div>
+    </details>
+
+    <details class="param-card">
+      <summary class="param-summary" data-i18n-html="param.noise">噪声声道 <span class="param-channel ch-3">NSE</span></summary>
+      <div class="param-body">
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.mode">模式</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="noiseMode" data-channel="3" data-value="0" data-i18n="param.noise.long">长噪声</button>
+            <button class="seg-btn" data-param="noiseMode" data-channel="3" data-value="1" data-i18n="param.noise.short">短噪声</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.drum">鼓类型</span>
+          <input type="range" class="param-range" data-param="noisePeriod" data-channel="3" min="0" max="15" value="8" id="noisePeriod_3" />
+          <span class="param-value" id="noisePeriodLabel_3">8·中鼓</span>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.volume">音量</span>
+          <input type="range" class="param-range" data-param="vol" data-channel="3" min="0" max="15" value="11" id="vol_3" />
+          <span class="param-value" id="volLabel_3">11</span>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.envelope">包络</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="envMode" data-channel="3" data-value="const" data-i18n="param.env.const">恒定</button>
+            <button class="seg-btn" data-param="envMode" data-channel="3" data-value="decay" data-i18n="param.env.decay">衰减</button>
+            <button class="seg-btn" data-param="envMode" data-channel="3" data-value="loop" data-i18n="param.env.loop">循环</button>
+          </div>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <!-- 编排 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title" data-i18n="panel.arrange">↻ 歌曲编排</span>
+      <span class="card-subtitle" data-i18n="arrange.subtitle">前奏 / 主歌 / 副歌</span>
+    </div>
+    <div class="order-bar" id="orderBar"></div>
+    <div class="order-toolbar">
+      <button class="mini-btn new" id="addOrderBtn" data-i18n="arrange.append">＋ 追加当前段</button>
+      <button class="mini-btn dup" id="loopStartBtn" data-i18n="arrange.loopStart">↺ 设为循环起</button>
+      <button class="mini-btn del" id="loopEndBtn" data-i18n="arrange.loopEnd">↻ 设为循环止</button>
+    </div>
+    <p class="param-note" style="margin-top: 8px;" data-i18n="arrange.note">「循环起/止」之间的段落循环播放，之前的段落（如前奏）只播一次。</p>
+  </div>
+
+  <!-- 预设 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title" data-i18n="panel.presets">⌨ 预设</span>
+      <span class="toast" id="toast">就绪</span>
+    </div>
+    <div class="preset-row">
+      <button class="preset-btn classic" data-preset="star" data-i18n="preset.star">星尘脉冲</button>
+      <button class="preset-btn victory" data-preset="victory" data-i18n="preset.victory">胜利凯旋</button>
+    </div>
+    <div style="margin-top:6px;">
+      <button class="btn btn-secondary" id="importMidiBtn" style="width:100%;" data-i18n="import.midi">📂 导入 MIDI 文件</button>
+    </div>
+    <input type="file" id="midiFileInput" accept=".mid,.midi,audio/mid,audio/midi" style="display:none;" />
+  </div>
+
+  <!-- 存档库 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title" data-i18n="panel.library">💾 存档</span>
+      <span class="card-subtitle" id="libraryCount">0 首</span>
+    </div>
+    <div id="libraryContainer">
+      <div class="library-empty">
+        <div class="emoji">🎵</div>
+        <p>暂无存档<br />按「保存」存入你的歌曲</p>
+      </div>
+    </div>
+    <div style="margin-top:10px;">
+      <button class="btn btn-secondary" id="exportMidiBtn" style="width:100%;" data-i18n="export.midi">⬇️ 导出 MIDI</button>
+    </div>
+  </div>
+
+  <!-- 底部 -->
+  <div class="footer">
+    <span class="heart">♥</span> NES CHIPTUNE <span class="heart">♥</span>
+  </div>
+
+  </div><!-- /viewSynth -->
+
+  <div id="viewHelp" class="app-view" hidden>
+    <div class="help-card">
+      <h2 data-i18n="help.intro.title"></h2>
+      <div data-i18n-html="help.intro.body"></div>
+    </div>
+    <div class="help-card">
+      <h2 data-i18n="help.quick.title"></h2>
+      <div data-i18n-html="help.quick.body"></div>
+    </div>
+    <div class="help-card">
+      <h2 data-i18n="help.channels.title"></h2>
+      <div data-i18n-html="help.channels.body"></div>
+    </div>
+    <div class="help-card">
+      <h2 data-i18n="help.notes.title"></h2>
+      <div data-i18n-html="help.notes.body"></div>
+    </div>
+    <div class="help-card">
+      <h2 data-i18n="help.params.title"></h2>
+      <div data-i18n-html="help.params.body"></div>
+    </div>
+    <div class="help-card">
+      <h2 data-i18n="help.arrange.title"></h2>
+      <div data-i18n-html="help.arrange.body"></div>
+    </div>
+    <div class="help-card">
+      <h2 data-i18n="help.play.title"></h2>
+      <div data-i18n-html="help.play.body"></div>
+    </div>
+    <div class="help-card">
+      <h2 data-i18n="help.library.title"></h2>
+      <div data-i18n-html="help.library.body"></div>
+    </div>
+    <div class="help-card">
+      <h2 data-i18n="help.presets.title"></h2>
+      <div data-i18n-html="help.presets.body"></div>
+    </div>
+    <div class="help-card">
+      <h2 data-i18n="help.midi.title"></h2>
+      <div data-i18n-html="help.midi.body"></div>
+    </div>
+    <div class="help-footer" data-i18n="help.footer"></div>
+  </div>
+</div>
+
+<!-- 分享模态框 -->
+<div class="modal-overlay" id="shareModal">
+  <div class="modal">
+    <h3 data-i18n="share.title">✦ 歌曲完成！ ✦</h3>
+    <p data-i18n-html="share.desc">你的 NES 芯片音乐已保存<br />截图分享给小伙伴吧～</p>
+    <div class="share-card">
+      <div class="emoji">💜</div>
+      <div class="name" id="shareName">MY TUNE</div>
+      <div class="meta" id="shareMeta">140 BPM · NES 2A03</div>
+    </div>
+    <p class="share-tip" data-i18n-html="share.tip">📸 截图分享给 <span>好友</span></p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="closeShareBtn" style="flex: 1;" data-i18n="share.close">关闭</button>
+      <button class="btn btn-primary" id="playShareBtn" style="flex: 1;" data-i18n="share.preview">▶ 试听</button>
+    </div>
+  </div>
+</div>
+
+<script src="./i18n.js"></script>
+<script src="./nes-apu.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
