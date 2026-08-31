@@ -1,5 +1,6 @@
 // NES 2A03 APU 合成引擎 — 经典脚本，挂 window.NesApu
-// 忠实复现 Pulse1/Pulse2（占空比+扫频+音量包络）、Triangle（32 步量化）、Noise（15-bit LFSR）
+// 复现 Pulse1/2/3/4（占空比+扫频+音量包络）、Triangle（32 步量化）、Noise（15-bit LFSR），
+// 以及扩展 Sawtooth 锯齿波声道
 // 参考：https://www.nesdev.org/wiki/APU 及各子页
 (function () {
   'use strict';
@@ -28,14 +29,15 @@
   ];
 
   var PULSE_SLOT = 64; // Pulse 每 duty slot 采样数（8*64=512 周期采样）
-  var TRI_SLOT = 16;   // Triangle 每 slot 采样数（32*16=512 周期采样）
+  var TRI_SLOT = 16;   // Triangle/Sawtooth 每 slot 采样数（32*16=512 周期采样）
 
   // ============ 运行时状态 ============
   var ctx = null;
   var pulseBuffers = null; // 4 个 AudioBuffer
   var triangleBuffer = null;
+  var sawtoothBuffer = null;
   var noiseBuffers = null; // [mode0, mode1]
-  var pulseBus = null;     // Pulse1+Pulse2
+  var pulseBus = null;     // Pulse1+Pulse2+Pulse3+Pulse4+Sawtooth
   var tndBus = null;       // Triangle+Noise
   var shaper = null;       // 软削波
 
@@ -72,8 +74,16 @@
     return buildBuffer(vals, TRI_SLOT);
   }
 
+  function buildSawtoothBuffer() {
+    // 扩展锯齿波：32 步线性上升，映射到 [-1, +1]
+    var vals = [];
+    for (var i = 0; i < 32; i++) vals.push((i / 31) * 2 - 1);
+    return buildBuffer(vals, TRI_SLOT);
+  }
+
   function buildNoiseBuffer(mode) {
-    var length = mode === 1 ? 93 : 32767;
+    // 长模式 LFSR 周期 32767；短模式（bit6 反馈）周期 127
+    var length = mode === 1 ? 127 : 32767;
     var buf = ctx.createBuffer(1, length, ctx.sampleRate);
     var data = buf.getChannelData(0);
     var lfsr = 1; // 上电初始值
@@ -126,6 +136,7 @@
     pulseBuffers = [];
     for (var d = 0; d < 4; d++) pulseBuffers.push(buildPulseBuffer(d));
     triangleBuffer = buildTriangleBuffer();
+    sawtoothBuffer = buildSawtoothBuffer();
     noiseBuffers = [buildNoiseBuffer(0), buildNoiseBuffer(1)];
 
     buildMixer();
@@ -213,7 +224,6 @@
     if (!depthSemis || depthSemis <= 0) return;
     var vibFreq = 6.0;   // 颤音速率 Hz
     var step = 1 / 40;   // 每 25ms 设一个点，足够平滑
-    var prevRate = baseRate;
     // 第一个点用 setValueAtTime 锚定起始值
     src.playbackRate.setValueAtTime(baseRate, startTime);
     for (var t = step; t <= duration + step * 0.5; t += step) {
@@ -221,7 +231,6 @@
       var rate = baseRate * Math.pow(2, offset / 12);
       var ct = Math.min(startTime + t, startTime + duration);
       src.playbackRate.linearRampToValueAtTime(rate, ct);
-      prevRate = rate;
     }
   }
 
@@ -242,7 +251,7 @@
   }
 
   // ============ 音符触发 ============
-  // type: 'pulse1' | 'pulse2' | 'triangle' | 'noise'
+  // type: 'pulse1' | 'pulse2' | 'pulse3' | 'pulse4' | 'triangle' | 'noise' | 'sawtooth'
   // params: 声道参数对象
   // pitchValue: 旋律=MIDI 音高；noise=周期索引 0-15
   // volOverride: 音量列覆盖值（可选，0-15），用于 pulse/noise；triangle 无音量控制，忽略
@@ -271,7 +280,8 @@
       applyEnvelope(gain, params, startTime, duration, volOverride);
     } else if (type === 'triangle') {
       src.buffer = triangleBuffer;
-      // Triangle 比 Pulse 低一个八度：f = fCPU/(32*(t+1))
+      // Triangle 频率公式 f = fCPU/(32*(t+1))（Pulse 为 /16），此处按目标音高反推 timer，
+      // 因此输出频率与输入 MIDI 音高一致
       var tf = midiToFreq(pitchValue);
       var tt = Math.round(fCPU / (32 * tf) - 1);
       tt = Math.max(8, Math.min(0x7FF, tt));
@@ -296,9 +306,14 @@
       gain.gain.setValueAtTime(0.8, startTime + duration - tfade);
       gain.gain.linearRampToValueAtTime(0, startTime + duration);
     } else {
-      // pulse1 / pulse2
-      var duty = Math.max(0, Math.min(3, params.duty));
-      src.buffer = pulseBuffers[duty];
+      // pulse1 / pulse2 / pulse3 / pulse4 / sawtooth
+      var isSaw = (type === 'sawtooth');
+      if (isSaw) {
+        src.buffer = sawtoothBuffer;
+      } else {
+        var duty = Math.max(0, Math.min(3, params.duty));
+        src.buffer = pulseBuffers[duty];
+      }
       var pf = midiToFreq(pitchValue);
       initialPeriod = Math.round(fCPU / (16 * pf) - 1);
       initialPeriod = Math.max(8, Math.min(0x7FF, initialPeriod));
@@ -317,7 +332,9 @@
         applyVibrato(src, baseRate, vibratoDepth, startTime, duration);
       }
       applyEnvelope(gain, params, startTime, duration, volOverride);
-      applySweep(src, type, params, initialPeriod, startTime, duration);
+      if (!isSaw) {
+        applySweep(src, type, params, initialPeriod, startTime, duration);
+      }
     }
 
     src.connect(gain);

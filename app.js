@@ -8,7 +8,7 @@
   var STEP_COUNT = 32;
   var STORAGE_KEY = 'xhs_8bit_nes_song_v1';
   var LEGACY_KEY = 'neon_8bit_melodies_v6';
-  var CHANNEL_TYPES = ['pulse1', 'pulse2', 'triangle', 'noise'];
+  var CHANNEL_TYPES = ['pulse1', 'pulse2', 'triangle', 'noise', 'pulse3', 'pulse4', 'sawtooth'];
 
   var t = (window.I18N && window.I18N.t) ? window.I18N.t : function (k) { return k; };
   function noiseName(i) { return t('noise.' + i); }
@@ -22,7 +22,10 @@
 
   // Noise 周期标签由 i18n 字典（noise.0 ~ noise.15）经 noiseName() 提供
 
-  var CHANNEL_LABELS = { pulse1: 'P1', pulse2: 'P2', triangle: 'TRI', noise: 'NSE' };
+  var CHANNEL_LABELS = { pulse1: 'P1', pulse2: 'P2', triangle: 'TRI', noise: 'NSE', pulse3: 'P3', pulse4: 'P4', sawtooth: 'SAW' };
+
+  // 旋律声道索引（非噪声），用于 MIDI 导入声部分配与八度拟合
+  var MELODIC_CHANNELS = [0, 1, 2, 4, 5, 6];
 
   // ========== 状态 ==========
   var song = createEmptySong();
@@ -35,7 +38,7 @@
   var toastTimer = null;
 
   // 每个声道当前选中的「放置音高」（旋律=MIDI，噪声=周期索引）
-  var selectedPitch = { pulse1: 72, pulse2: 60, triangle: 48, noise: 8 };
+  var selectedPitch = { pulse1: 72, pulse2: 60, triangle: 48, noise: 8, pulse3: 67, pulse4: 60, sawtooth: 55 };
 
   // 琶音类型：每个旋律声道当前选中的琶音（null=无，[o1,o2]=两个半音偏移）
   var ARP_TYPES = [
@@ -45,14 +48,14 @@
     { label: 'arp.fifth', offsets: [7, 12] },
     { label: 'arp.octave', offsets: [12, 0] }
   ];
-  var selectedArp = { pulse1: 0, pulse2: 0, triangle: 0 }; // 存 ARP_TYPES 索引
+  var selectedArp = { pulse1: 0, pulse2: 0, triangle: 0, pulse3: 0, pulse4: 0, sawtooth: 0 }; // 存 ARP_TYPES 索引
 
   // 各声道当前选中的音量（null=默认，用声道 vol；否则 0-15 覆盖）。triangle 无音量控制，不参与
-  var selectedVol = { pulse1: null, pulse2: null, noise: null };
+  var selectedVol = { pulse1: null, pulse2: null, noise: null, pulse3: null, pulse4: null, sawtooth: null };
 
   // 各声道当前选中的时值（音符持续步数）
   var GATE_OPTIONS = [1, 2, 4, 8, 16, 32];
-  var selectedGate = { pulse1: 1, pulse2: 1, triangle: 1, noise: 1 };
+  var selectedGate = { pulse1: 1, pulse2: 1, triangle: 1, noise: 1, pulse3: 1, pulse4: 1, sawtooth: 1 };
 
   // 颤音类型：旋律声道选中的颤音深度（半音）
   var VIBRATO_TYPES = [
@@ -61,7 +64,7 @@
     { label: 'vib.medium', depth: 1 },
     { label: 'vib.heavy', depth: 2 }
   ];
-  var selectedVibrato = { pulse1: 0, pulse2: 0, triangle: 0 }; // 存 VIBRATO_TYPES 索引
+  var selectedVibrato = { pulse1: 0, pulse2: 0, triangle: 0, pulse3: 0, pulse4: 0, sawtooth: 0 }; // 存 VIBRATO_TYPES 索引
 
   // 播放调度状态（前瞻调度器）
   var schedulerTimer = null;
@@ -74,7 +77,7 @@
   var currentPlayStep = -1; // 当前播放的步（-1=未播放），用于播放时同步/编辑
 
   // 滑音：每个旋律声道上一个音符的 MIDI 音高（用于跨音符滑音）
-  var lastNotePitch = { pulse1: null, pulse2: null, triangle: null };
+  var lastNotePitch = { pulse1: null, pulse2: null, pulse3: null, pulse4: null, triangle: null, sawtooth: null };
 
   // ========== DOM 元素 ==========
   var els = {};
@@ -126,9 +129,18 @@
     if (type === 'noise') {
       return { type: type, mode: 0, period: 8, vol: 11, envMode: 'decay', notes: emptyNotes(), vols: emptyNotes(), gates: emptyNotes() };
     }
-    // pulse1 / pulse2
+    if (type === 'sawtooth') {
+      return {
+        type: type, vol: 10, envMode: 'decay',
+        notes: emptyNotes(), arp: emptyNotes(), vols: emptyNotes(), gates: emptyNotes(), vibrato: emptyNotes(),
+        glideTime: 0
+      };
+    }
+    // pulse1 / pulse2 / pulse3 / pulse4
+    var dutyDefault = (type === 'pulse1') ? 1 : (type === 'pulse2') ? 2 : (type === 'pulse3') ? 0 : 3;
+    var volDefault = (type === 'pulse1') ? 12 : (type === 'pulse2') ? 10 : 8;
     return {
-      type: type, duty: type === 'pulse1' ? 1 : 2, vol: type === 'pulse1' ? 12 : 10,
+      type: type, duty: dutyDefault, vol: volDefault,
       envMode: 'decay',
       sweepOn: false, sweepPeriod: 0, sweepNegate: false, sweepShift: 0,
       notes: emptyNotes(), arp: emptyNotes(), vols: emptyNotes(), gates: emptyNotes(), vibrato: emptyNotes(),
@@ -193,7 +205,13 @@
     if (!Array.isArray(s.order) || s.order.length === 0) return null;
     for (var i = 0; i < s.patterns.length; i++) {
       var p = s.patterns[i];
-      if (!p || !Array.isArray(p.channels) || p.channels.length !== 4) return null;
+      if (!p || !Array.isArray(p.channels) || (p.channels.length !== 4 && p.channels.length !== CHANNEL_TYPES.length)) return null;
+      // 旧存档（4 声道）补齐扩展声道
+      if (p.channels.length === 4) {
+        p.channels.push(createEmptyChannel('pulse3'));
+        p.channels.push(createEmptyChannel('pulse4'));
+        p.channels.push(createEmptyChannel('sawtooth'));
+      }
       for (var c = 0; c < p.channels.length; c++) {
         var ch = p.channels[c];
         if (!ch || typeof ch.type !== 'string' || !Array.isArray(ch.notes)) return null;
@@ -313,9 +331,10 @@
   }
 
   // 给参数下拉框包一层带标签的容器
-  function makeField(labelText, selectEl) {
+  function makeField(labelText, selectEl, fieldType) {
     var field = document.createElement('label');
     field.className = 'ch-field';
+    if (fieldType) field.setAttribute('data-field', fieldType);
     var tag = document.createElement('span');
     tag.className = 'ch-field-label';
     tag.textContent = labelText;
@@ -326,7 +345,7 @@
 
   function renderChannels() {
     els.tracks.innerHTML = '';
-    for (var c = 0; c < 4; c++) {
+    for (var c = 0; c < CHANNEL_TYPES.length; c++) {
       var ch = currentPattern().channels[c];
       var row = document.createElement('div');
       row.className = 'channel-row';
@@ -384,7 +403,7 @@
           volSel.appendChild(vopt);
         }
         volSel.addEventListener('change', onVolChange);
-        controls.appendChild(makeField(t('param.volume'), volSel));
+        controls.appendChild(makeField(t('param.volume'), volSel, 'volume'));
       }
 
       // 琶音选择器（仅旋律声道）
@@ -400,7 +419,7 @@
           arpSel.appendChild(aopt);
         }
         arpSel.addEventListener('change', onArpChange);
-        controls.appendChild(makeField(t('field.arp'), arpSel));
+        controls.appendChild(makeField(t('field.arp'), arpSel, 'arp'));
 
         // 颤音选择器（仅旋律声道）
         var vibSel = document.createElement('select');
@@ -414,7 +433,7 @@
           vibSel.appendChild(bopt);
         }
         vibSel.addEventListener('change', onVibratoChange);
-        controls.appendChild(makeField(t('field.vibrato'), vibSel));
+        controls.appendChild(makeField(t('field.vibrato'), vibSel, 'vib'));
       }
 
       // 时值选择器（所有声道）
@@ -429,7 +448,7 @@
         gateSel.appendChild(gopt);
       }
       gateSel.addEventListener('change', onGateChange);
-      controls.appendChild(makeField(t('field.gate'), gateSel));
+      controls.appendChild(makeField(t('field.gate'), gateSel, 'gate'));
 
       head.appendChild(controls);
       row.appendChild(head);
@@ -510,9 +529,10 @@
 
   function renderParamPanel() {
     var p = currentPattern();
-    for (var c = 0; c < 4; c++) {
+    for (var c = 0; c < CHANNEL_TYPES.length; c++) {
       var ch = p.channels[c];
-      // 滑音：所有旋律声道（pulse1/pulse2/triangle）都有
+      if (!ch) continue;
+      // 滑音：所有旋律声道（pulse/triangle/sawtooth）都有
       if (ch.type !== 'noise') {
         var glideInput = els['glideTime_' + c];
         if (glideInput) {
@@ -533,13 +553,15 @@
       var volLabel = els['volLabel_' + c];
       if (volLabel) volLabel.textContent = ch.vol;
 
-      if (ch.type === 'pulse1' || ch.type === 'pulse2') {
+      if (ch.type === 'pulse1' || ch.type === 'pulse2' || ch.type === 'pulse3' || ch.type === 'pulse4') {
         setDutyButtons(c, ch.duty);
         setEnvButtons(c, ch.envMode);
         if (els['sweepOn_' + c]) els['sweepOn_' + c].checked = !!ch.sweepOn;
         if (els['sweepPeriod_' + c]) els['sweepPeriod_' + c].value = String(ch.sweepPeriod);
         if (els['sweepShift_' + c]) els['sweepShift_' + c].value = String(ch.sweepShift);
         setSweepDirButtons(c, ch.sweepNegate);
+      } else if (ch.type === 'sawtooth') {
+        setEnvButtons(c, ch.envMode);
       } else if (ch.type === 'noise') {
         setModeButtons(c, ch.mode);
         if (els['noisePeriod_' + c]) els['noisePeriod_' + c].value = String(ch.period);
@@ -973,7 +995,7 @@
 
   // ========== 交互：order 编排 ==========
   function addOrderSlot() {
-    song.order.splice(song.order.length, 0, currentPatternIndex);
+    song.order.push(currentPatternIndex);
     song.loopEnd = song.order.length;
     // 选中新添加的槽位
     currentOrderIndex = song.order.length - 1;
@@ -987,7 +1009,7 @@
     song.loopEnd = Math.max(1, Math.min(song.loopEnd, song.order.length));
     // 修正当前选中的槽位
     if (currentOrderIndex >= song.order.length) currentOrderIndex = song.order.length - 1;
-    if (currentOrderIndex > slot || currentOrderIndex === slot) currentOrderIndex = Math.max(0, currentOrderIndex - 1);
+    if (currentOrderIndex >= slot) currentOrderIndex = Math.max(0, currentOrderIndex - 1);
     renderAll();
   }
 
@@ -1107,7 +1129,7 @@
     rebuildSchedule();
     isPlaying = true;
     // 重置滑音跟踪状态
-    lastNotePitch = { pulse1: null, pulse2: null, triangle: null };
+    lastNotePitch = { pulse1: null, pulse2: null, pulse3: null, pulse4: null, triangle: null, sawtooth: null };
     if (singleLoop) {
       globalStep = 0;
       singleLoopPatternIndex = currentPatternIndex; // 单段循环时锁定播放的段落
@@ -1146,9 +1168,10 @@
         currentOrderIndex = savedOrderIndex;
       }
       renderPatternTabs();
-      renderParamPanel();
       renderOrderBar();
     }
+    // 恢复参数面板滑块为段落级参数（播放时被同步为当前步值）
+    renderParamPanel();
     // 恢复下拉框为画笔设置（播放时被同步为格子状态）
     renderChannels();
   }
@@ -1303,6 +1326,17 @@
         }
       }
 
+      // 同步参数面板音量滑块：有音符且有音量列时显示当前音符力度，否则回落到段落级音量
+      var volInput = els['vol_' + c];
+      if (volInput) {
+        var displayVol = ch.vol;
+        if (hasNote && ch.vols && ch.vols[start] !== null && ch.vols[start] !== undefined) {
+          displayVol = ch.vols[start];
+        }
+        volInput.value = String(displayVol);
+        if (els['volLabel_' + c]) els['volLabel_' + c].textContent = displayVol;
+      }
+
       var arpSel = row.querySelector('.arp-select');
       if (arpSel) {
         if (hasNote && ch.arp && Array.isArray(ch.arp[start])) {
@@ -1328,6 +1362,38 @@
         } else {
           gateSel.value = String(selectedGate[ch.type]);
         }
+      }
+
+      // 同步参数面板鼓类型滑块：噪声声道随当前鼓点变化，否则回落到段落级鼓类型
+      if (ch.type === 'noise') {
+        var npInput = els['noisePeriod_' + c];
+        if (npInput) {
+          var displayPeriod = hasNote ? ch.notes[start] : ch.period;
+          npInput.value = String(displayPeriod);
+          if (els['noisePeriodLabel_' + c]) els['noisePeriodLabel_' + c].textContent = displayPeriod + '·' + noiseName(displayPeriod);
+        }
+      }
+
+      // 同步参数面板滑音滑块：有音符且有滑音时显示实际滑音时间（受音符时长约束），否则 0
+      if (ch.type !== 'noise') {
+        var glideInput = els['glideTime_' + c];
+        if (glideInput) {
+          var displayGlideMs = 0;
+          if (hasNote && ch.glideTime > 0) {
+            var gateNow = (ch.gates && ch.gates[start]) || 1;
+            var gTime = Math.min(ch.glideTime, stepDuration() * gateNow);
+            displayGlideMs = Math.round(gTime * 1000);
+          }
+          glideInput.value = String(Math.round(displayGlideMs / 10));
+          if (els['glideTimeLabel_' + c]) els['glideTimeLabel_' + c].textContent = displayGlideMs + ' ms';
+        }
+      }
+
+      // 同步参数面板扫频滑块：有音符且有扫频时显示扫频参数，否则 0
+      if (ch.type === 'pulse1' || ch.type === 'pulse2' || ch.type === 'pulse3' || ch.type === 'pulse4') {
+        var sweepActive = hasNote && ch.sweepOn;
+        if (els['sweepPeriod_' + c]) els['sweepPeriod_' + c].value = String(sweepActive ? ch.sweepPeriod : 0);
+        if (els['sweepShift_' + c]) els['sweepShift_' + c].value = String(sweepActive ? ch.sweepShift : 0);
       }
     }
   }
@@ -1458,18 +1524,53 @@
     return scale;
   }
 
-  // 生成节奏动机：{offset, len} 起音事件列表，偏向八分音符网格，强拍（0/4）有音
-  function genRhythmMotif(length) {
+  // 副歌和弦变奏：轮换和弦顺序 + 挂留(sus2/sus4)，让高潮和声更新鲜，避免三段套同一套和弦
+  function varyChords(chords) {
+    var rot = 1 + Math.floor(Math.random() * (chords.length - 1));
+    var rotated = chords.slice(rot).concat(chords.slice(0, rot));
+    return rotated.map(function (ch) {
+      if (Math.random() < 0.35) {
+        var color = ch.color.slice();
+        var idx = color.indexOf(4);
+        if (idx < 0) idx = color.indexOf(3);
+        if (idx >= 0) {
+          color[idx] = Math.random() < 0.5 ? 2 : 5; // sus2 或 sus4
+          return { root: ch.root, color: color };
+        }
+      }
+      return ch;
+    });
+  }
+
+  // 节奏风格：按风格提供不同的音符/休止长度分布与切分倾向
+  function rhythmProfile(styleKey) {
+    if (styleKey === 'debussy') {
+      // 德彪西：舒缓空灵，长音长休止，几乎不切分
+      return { noteLens: [2, 4, 4, 8, 8], restLens: [2, 4, 4, 6], syncopate: 0.1 };
+    }
+    if (styleKey === 'michael_jackson') {
+      // MJ：律动强，短音 + 附点（3 步）+ 短休止，切分多
+      return { noteLens: [1, 2, 2, 3, 3], restLens: [1, 1, 2, 3], syncopate: 0.55 };
+    }
+    // 经典流行：稳定，八分/四分为主，适度切分
+    return { noteLens: [1, 2, 2, 4, 4], restLens: [2, 2, 1, 4], syncopate: 0.25 };
+  }
+
+  // 生成节奏动机：{offset, len} 起音事件列表，按风格差异化（切分、附点、长短音）
+  function genRhythmMotif(length, styleKey) {
+    var prof = rhythmProfile(styleKey);
     var events = [];
     var pos = 0;
     while (pos < length) {
-      var len = (Math.random() < 0.5) ? 2 : ((Math.random() < 0.6) ? 1 : 4);
+      var len = pick(prof.noteLens);
       if (pos + len > length) len = length - pos;
       if (len < 1) len = 1;
       events.push({ offset: pos, len: len });
       pos += len;
-      // 休止偏向 2 步（八分），偶尔 1 步（十六分）制造切分
-      pos += (Math.random() < 0.6) ? 2 : 1;
+      // 休止：切分风格更常把休止缩到 1 步，让下个音符落在弱拍形成切分
+      var rest = pick(prof.restLens);
+      if (Math.random() < prof.syncopate) rest = 1;
+      pos += rest;
     }
     if (events.length === 0) events.push({ offset: 0, len: 2 });
     return events;
@@ -1497,13 +1598,44 @@
     return best;
   }
 
+  // 按乐句方向选音：dir>0 偏好上行（不低于 prev），dir<0 偏好下行（不高于 prev）
+  function directionalNote(candidates, prev, dir) {
+    if (!candidates || candidates.length === 0) return null;
+    if (prev === null || prev === undefined) {
+      if (dir > 0) return candidates[candidates.length - 1];
+      if (dir < 0) return candidates[0];
+      return pick(candidates);
+    }
+    var filtered = [];
+    for (var i = 0; i < candidates.length; i++) {
+      if (dir > 0 && candidates[i] >= prev) filtered.push(candidates[i]);
+      else if (dir < 0 && candidates[i] <= prev) filtered.push(candidates[i]);
+      else filtered.push(candidates[i]);
+    }
+    if (filtered.length === 0) filtered = candidates;
+    return pick(filtered);
+  }
+
+  // 把音高规整到 [low, high] 音域内（按八度平移，范围不足八度时取边界）
+  function clampPitch(pitch, low, high) {
+    if (pitch >= low && pitch <= high) return pitch;
+    var p = pitch;
+    while (p > high) p -= 12;
+    while (p < low) p += 12;
+    if (p < low) p = low;
+    if (p > high) p = high;
+    return p;
+  }
+
   function generateMelody(notes, style, section, vols, gates, vibrato) {
     var sc = sectionScale(style.scale, section);
     var low = sc[0], high = sc[sc.length - 1];
     var chordCount = style.chords.length;
     var chordLen = STEP_COUNT / chordCount;
-    var rhythm = genRhythmMotif(chordLen); // 一段节奏动机整段复用，形成律动一致
+    var rhythm = genRhythmMotif(chordLen, style.key); // 一段节奏动机整段复用，形成律动一致
     var prevPitch = null;
+    var questionEnd = Math.floor(chordCount / 2) - 1; // 问句结束段（停在非主音，未完成）
+    var answerEnd = chordCount - 1;                   // 答句结束段（落回主音，完整终止）
 
     for (var ci = 0; ci < chordCount; ci++) {
       var chord = style.chords[ci];
@@ -1513,18 +1645,35 @@
       var evCount = rhythm.length;
       if (section === 'intro') evCount = Math.ceil(evCount / 2); // 前奏更稀疏
 
+      // 乐句方向：前半段上行（问句），后半段下行（答句）
+      var phraseDir = (ci < chordCount / 2) ? 1 : -1;
+
       for (var e = 0; e < evCount; e++) {
         var ev = rhythm[e];
         var step = base + ev.offset;
         if (step >= STEP_COUNT) break;
         var isStrong = (ev.offset % 4 === 0);
+        var isLast = (e === evCount - 1);
         var pitch;
         if (isStrong) {
           // 强拍：平滑落到最近的和弦音（声部进行）
           pitch = nearestChordTone(tones, prevPitch);
         } else {
-          // 弱拍：音阶内级进，形成流畅线条
-          pitch = nearbyNote(sc, prevPitch);
+          // 弱拍：按乐句方向级进，问句上行、答句下行，形成起伏
+          pitch = directionalNote(sc, prevPitch, phraseDir);
+          if (pitch === null) pitch = nearbyNote(sc, prevPitch);
+        }
+        // 乐句结尾：问句停在非主音（未完成感），答句落回主音（完整终止）
+        if (isLast) {
+          if (ci === answerEnd) {
+            pitch = clampPitch(chord.root, low, high);
+          } else if (ci === questionEnd) {
+            var nonRoot = [];
+            for (var t = 0; t < tones.length; t++) {
+              if (tones[t] !== chord.root) nonRoot.push(tones[t]);
+            }
+            if (nonRoot.length > 0) pitch = nonRoot[nonRoot.length - 1];
+          }
         }
         // 防止过大跳进（超过 9 半音则改级进）
         if (prevPitch !== null && Math.abs(pitch - prevPitch) > 9) {
@@ -1600,6 +1749,69 @@
         if (vibrato && gate >= 4 && Math.random() < 0.25) {
           vibrato[step] = 1 + Math.floor(Math.random() * 2); // 轻/中
         }
+      }
+    }
+  }
+
+  // 生成对位副旋律：音区比主旋律低、节奏更稀疏，形成二声部呼应
+  function generateCounter(notes, style, section, vols, gates, vibrato) {
+    var sc = sectionScale(style.scale, section);
+    var mid = Math.floor(sc.length / 2);
+    var counterScale = sc.slice(0, mid + 1); // 取音阶低半段，避开主旋律音区
+    var low = counterScale[0], high = counterScale[counterScale.length - 1];
+    var chordCount = style.chords.length;
+    var chordLen = STEP_COUNT / chordCount;
+    var rhythm = genRhythmMotif(chordLen, style.key);
+    var prevPitch = null;
+
+    for (var ci = 0; ci < chordCount; ci++) {
+      var chord = style.chords[ci];
+      var tones = chordTones(chord.root, chord.color, low, high);
+      if (tones.length === 0) tones = counterScale;
+      var base = ci * chordLen;
+      // 副旋律比主旋律稀疏：前奏最少，副歌稍密
+      var evCount = section === 'intro' ? 2 : (section === 'chorus' ? rhythm.length : Math.max(2, Math.ceil(rhythm.length / 2)));
+
+      for (var e = 0; e < evCount; e++) {
+        var ev = rhythm[e];
+        var step = base + ev.offset;
+        if (step >= STEP_COUNT) break;
+        var isStrong = (e % 2 === 0);
+        var pitch = isStrong ? nearestChordTone(tones, prevPitch) : nearbyNote(counterScale, prevPitch);
+        if (prevPitch !== null && Math.abs(pitch - prevPitch) > 7) pitch = nearbyNote(counterScale, prevPitch);
+        var gate = Math.min(ev.len, STEP_COUNT - step);
+        notes[step] = pitch;
+        if (vols) vols[step] = 9; // 低于主旋律
+        if (gates) gates[step] = gate;
+        if (vibrato && gate >= 4 && Math.random() < 0.2) {
+          vibrato[step] = 1 + Math.floor(Math.random() * 2);
+        }
+        prevPitch = pitch;
+      }
+    }
+  }
+
+  // 生成琶音分解线：快速上下分解和弦，形成流动律动
+  function generateArpLine(notes, style, section, vols, gates) {
+    var chordCount = style.chords.length;
+    var chordLen = STEP_COUNT / chordCount;
+    var low = style.scale[0], high = style.scale[style.scale.length - 1];
+    for (var ci = 0; ci < chordCount; ci++) {
+      var chord = style.chords[ci];
+      var tones = chordTones(chord.root, chord.color, low, high);
+      if (tones.length === 0) continue;
+      var base = ci * chordLen;
+      for (var p = 0; p < chordLen; p += 2) {
+        if (section === 'intro' && Math.random() < 0.4) continue; // 前奏更稀疏
+        var step = base + p;
+        var k = Math.floor(p / 2);
+        // 低-高-低-高 交替，形成波浪琶音
+        var idx = (k % 2 === 0) ? (k % tones.length) : (tones.length - 1 - (k % tones.length));
+        var pitch = tones[idx];
+        var gate = Math.min(2, STEP_COUNT - step);
+        notes[step] = pitch;
+        if (vols) vols[step] = 7; // 琶音量低，衬托
+        if (gates) gates[step] = gate;
       }
     }
   }
@@ -1705,54 +1917,75 @@
     var pat = createEmptyPattern(t(labels[section]));
     var prof = sectionProfile(section);
 
-    // P1 旋律声道（主旋律音量高于和声）
-    pat.channels[0].duty = pickDutyByBias(style.dutyPool, prof.dutyBias);
-    pat.channels[0].envMode = pick(prof.env1);
-    pat.channels[0].vol = randInt(prof.vol1[0], prof.vol1[1]);
+    // 副歌：换一套变奏和弦（轮换顺序 + 挂留），让高潮和声更新鲜，避免三段套同一套和弦
+    var st = style;
+    if (section === 'chorus') {
+      st = { key: style.key, scale: style.scale, chords: varyChords(style.chords), drum: style.drum, dutyPool: style.dutyPool };
+    }
 
-    // P2 和声声道（音量低于 P1）
+    // SAW 主旋律（锯齿波音色厚实，最突出）
+    pat.channels[6].vol = randInt(prof.vol1[0], prof.vol1[1]);
+    pat.channels[6].envMode = pick(prof.env1);
+
+    // P1 副旋律（对位第二声部，音量低于主旋律）
+    pat.channels[0].duty = pickDutyByBias(style.dutyPool, prof.dutyBias);
+    pat.channels[0].envMode = pick(prof.env2);
+    pat.channels[0].vol = randInt(prof.vol2[0], prof.vol2[1]);
+
+    // P2 和声（和弦衬托）
     pat.channels[1].duty = pickDutyByBias(style.dutyPool, prof.dutyBias);
-    pat.channels[1].envMode = pick(prof.env2);
+    pat.channels[1].envMode = 'decay';
     pat.channels[1].vol = randInt(prof.vol2[0], prof.vol2[1]);
+
+    // P3 琶音分解（流动律动，音量低）
+    pat.channels[4].duty = pickDutyByBias(style.dutyPool, 0);
+    pat.channels[4].envMode = 'decay';
+    pat.channels[4].vol = 7;
+
+    // P4 副歌第二和声层（仅副歌使用）
+    pat.channels[5].duty = pickDutyByBias(style.dutyPool, prof.dutyBias);
+    pat.channels[5].envMode = 'decay';
+    pat.channels[5].vol = 8;
 
     // 噪声声道
     pat.channels[3].mode = pick(prof.noiseMode);
     pat.channels[3].vol = randInt(prof.noiseVol[0], prof.noiseVol[1]);
 
-    // 扫频：P1 概率较高，P2 概率较低（作为装饰音）
+    // 扫频：P1 副旋律作为装饰音（SAW 不支持扫频，仅脉冲声道）
     if (Math.random() < prof.sweepChance) {
       pat.channels[0].sweepOn = true;
       pat.channels[0].sweepShift = 1 + Math.floor(Math.random() * 3);
       pat.channels[0].sweepPeriod = section === 'intro' ? 1 : randInt(1, 3);
     }
-    if (Math.random() < prof.sweepChance * 0.4) {
-      pat.channels[1].sweepOn = true;
-      pat.channels[1].sweepShift = 1 + Math.floor(Math.random() * 3);
-      pat.channels[1].sweepPeriod = randInt(1, 4);
-    }
 
     // 滑音：按段落风格和概率设置（副歌更多，前奏较少）
     var glideChance = section === 'chorus' ? 0.6 : (section === 'verse' ? 0.4 : 0.2);
-    // P1 滑音
+    // SAW 主旋律滑音
     if (Math.random() < glideChance) {
-      pat.channels[0].glideTime = (50 + Math.floor(Math.random() * 150)) / 1000; // 50-200ms
+      pat.channels[6].glideTime = (50 + Math.floor(Math.random() * 150)) / 1000; // 50-200ms
     }
-    // P2 滑音（概率稍低）
+    // P1 副旋律滑音（概率稍低）
     if (Math.random() < glideChance * 0.7) {
-      pat.channels[1].glideTime = (50 + Math.floor(Math.random() * 150)) / 1000;
+      pat.channels[0].glideTime = (50 + Math.floor(Math.random() * 150)) / 1000;
     }
-    // TRI 滑音（低音滑音很有味道）
+    // TRI 低音滑音
     if (Math.random() < glideChance * 0.8) {
       pat.channels[2].glideTime = (80 + Math.floor(Math.random() * 170)) / 1000; // 80-250ms
     }
 
-    generateBass(pat.channels[2].notes, style, section, pat.channels[2].gates, pat.channels[2].vibrato);
-    generateDrums(pat.channels[3].notes, style, section, prof.noiseShift, pat.channels[3].vols);
-    generateMelody(pat.channels[0].notes, style, section, pat.channels[0].vols, pat.channels[0].gates, pat.channels[0].vibrato);
-    generateHarmony(pat.channels[1].notes, style, section, pat.channels[1].vols, pat.channels[1].gates, pat.channels[1].vibrato);
-    // 琶音：主旋律和和声按概率加琶音
-    generateArp(pat.channels[0].notes, pat.channels[0].arp, style, section);
-    generateArp(pat.channels[1].notes, pat.channels[1].arp, style, section);
+    // 声部生成
+    generateBass(pat.channels[2].notes, st, section, pat.channels[2].gates, pat.channels[2].vibrato);
+    generateDrums(pat.channels[3].notes, st, section, prof.noiseShift, pat.channels[3].vols);
+    generateMelody(pat.channels[6].notes, st, section, pat.channels[6].vols, pat.channels[6].gates, pat.channels[6].vibrato);   // SAW 主旋律
+    generateCounter(pat.channels[0].notes, st, section, pat.channels[0].vols, pat.channels[0].gates, pat.channels[0].vibrato); // P1 副旋律
+    generateHarmony(pat.channels[1].notes, st, section, pat.channels[1].vols, pat.channels[1].gates, pat.channels[1].vibrato); // P2 和声
+    generateArpLine(pat.channels[4].notes, st, section, pat.channels[4].vols, pat.channels[4].gates);                            // P3 琶音
+    if (section === 'chorus') {
+      generateHarmony(pat.channels[5].notes, st, section, pat.channels[5].vols, pat.channels[5].gates, null); // P4 副歌第二和声
+    }
+    // 琶音标记：主旋律与和声按概率加琶音
+    generateArp(pat.channels[6].notes, pat.channels[6].arp, st, section);
+    generateArp(pat.channels[1].notes, pat.channels[1].arp, st, section);
     return pat;
   }
 
@@ -1925,7 +2158,7 @@
       els[ids[i]] = document.getElementById(ids[i]);
     }
     // 参数控件引用
-    for (var c = 0; c < 4; c++) {
+    for (var c = 0; c < CHANNEL_TYPES.length; c++) {
       els['vol_' + c] = document.getElementById('vol_' + c);
       els['volLabel_' + c] = document.getElementById('volLabel_' + c);
       els['sweepOn_' + c] = document.getElementById('sweepOn_' + c);
@@ -2219,15 +2452,19 @@
         return { key: k, notes: sourceMap[k], median: arr[Math.floor(arr.length / 2)].midi };
       }).sort(function (a, b) { return a.median - b.median; });
       chBySource = {};
-      if (sourceList.length === 2) {
-        chBySource[sourceList[0].key] = 2;   // 低 → TRI
-        chBySource[sourceList[1].key] = 0;   // 高 → P1
-      } else {
-        chBySource[sourceList[0].key] = 2;   // 最低 → TRI
-        chBySource[sourceList[sourceList.length - 1].key] = 0; // 最高 → P1
-        for (var q = 0; q < sourceList.length; q++) {
-          if (chBySource[sourceList[q].key] == null) chBySource[sourceList[q].key] = 1; // 其余 → P2
-        }
+      // 按来源数选择声道映射表（来源已按中位音高从低到高排序）
+      // 声道索引：0=P1, 1=P2, 2=TRI, 3=NSE, 4=P3, 5=P4, 6=SAW
+      var SOURCE_CH_MAPS = [
+        [2, 0],              // 2 来源：TRI, P1
+        [2, 1, 0],           // 3 来源：TRI, P2, P1
+        [2, 6, 1, 0],        // 4 来源：TRI, SAW, P2, P1
+        [2, 6, 5, 1, 0],     // 5 来源：TRI, SAW, P4, P2, P1
+        [2, 6, 5, 4, 1, 0]   // 6 来源：TRI, SAW, P4, P3, P2, P1
+      ];
+      var mapIdx = Math.min(sourceList.length, 6) - 2;
+      var map = SOURCE_CH_MAPS[mapIdx];
+      for (var q = 0; q < sourceList.length; q++) {
+        chBySource[sourceList[q].key] = (q < map.length) ? map[q] : 1; // 溢出 → P2
       }
     }
 
@@ -2284,25 +2521,40 @@
         }
       }
     } else {
-      // 单来源：按音高做声部分离 + 声部保持（原有逻辑）
+      // 单来源：按音高做声部分离 + 声部保持（扩展至 6 旋律声道）
       var byStep = {};
       for (var j = 0; j < melody.length; j++) {
         var s = melody[j].step;
         (byStep[s] || (byStep[s] = [])).push(melody[j]);
       }
 
-      // 三个旋律声部：0=P1 主旋律（高）、1=P2 和声（中）、2=TRI 低音（低）
-      var lastPitch = [null, null, null];
-      var defaultPitch = [72, 60, 48];
+      // 六个旋律声部，按音高从低到高排列
+      // ch 2=TRI(低音), ch 6=SAW, ch 5=P4, ch 4=P3, ch 1=P2, ch 0=P1(主旋律)
+      var VOICE_CHANS = [2, 6, 5, 4, 1, 0];
+      var VOICE_DEF = { 0: 72, 1: 67, 2: 48, 4: 64, 5: 60, 6: 55 };
+      var lastPitch = {};
+      for (var vi = 0; vi < VOICE_CHANS.length; vi++) lastPitch[VOICE_CHANS[vi]] = null;
+
       function closestVoice(midi) {
-        var best = 0, bestDist = Infinity;
-        for (var v = 0; v < 3; v++) {
-          var p = lastPitch[v] == null ? defaultPitch[v] : lastPitch[v];
+        var best = VOICE_CHANS[0], bestDist = Infinity;
+        for (var v = 0; v < VOICE_CHANS.length; v++) {
+          var vc = VOICE_CHANS[v];
+          var p = lastPitch[vc] == null ? VOICE_DEF[vc] : lastPitch[vc];
           var d = Math.abs(midi - p);
-          if (d < bestDist) { bestDist = d; best = v; }
+          if (d < bestDist) { bestDist = d; best = vc; }
         }
         return best;
       }
+
+      // 和弦声部分配表（按音符数选择，和弦已升序）
+      // 索引 = 和弦内位置（0=最低音），值 = NES 声道索引
+      var CHORD_VOICES = {
+        2: [2, 0],
+        3: [2, 1, 0],
+        4: [2, 6, 1, 0],
+        5: [2, 6, 5, 1, 0],
+        6: [2, 6, 5, 4, 1, 0]
+      };
 
       var stepList = Object.keys(byStep).map(function (k) { return parseInt(k, 10); });
       stepList.sort(function (a, b) { return a - b; });
@@ -2317,32 +2569,29 @@
         var n = chord.length;
 
         if (n === 1) {
-          // 单音：按音高连续性路由到最近声部，避免旋律/低音错位
+          // 单音：按音高连续性路由到最近声部
           var v = closestVoice(chord[0].midi);
           putNote(pi, v, sInP, chord[0].midi, chord[0].gate, chord[0].vel);
           lastPitch[v] = chord[0].midi;
-        } else {
-          // 多音：最低→低音、最高→主旋律（主次声部天然连续）
-          putNote(pi, 2, sInP, chord[0].midi, chord[0].gate, chord[0].vel);
-          putNote(pi, 0, sInP, chord[n - 1].midi, chord[n - 1].gate, chord[n - 1].vel);
-          lastPitch[2] = chord[0].midi;
-          lastPitch[0] = chord[n - 1].midi;
-          if (n >= 3) {
-            var inner = chord.slice(1, n - 1); // 内声部（去掉最低/最高，已升序）
-            if (n === 3) {
-              // 单个内声部：直接作为 P2 和声
-              putNote(pi, 1, sInP, inner[0].midi, inner[0].gate, inner[0].vel);
-              lastPitch[1] = inner[0].midi;
-            } else {
-              // 琶音展开：内声部 ≥2 个时，把和弦内音铺成琶音，避免丢弃
-              var base = inner[0];
-              var o1 = inner[1].midi - base.midi;
-              var o2 = inner.length >= 3 ? (inner[2].midi - base.midi) : 12; // 不足 3 音用八度补足
-              putNote(pi, 1, sInP, base.midi, base.gate, base.vel);
-              chans[1].arp[sInP] = [o1, o2];
-              lastPitch[1] = base.midi;
-            }
+        } else if (n <= 6) {
+          // 2-6 音和弦：按 CHORD_VOICES 表分配
+          var voices = CHORD_VOICES[n];
+          for (var ci = 0; ci < n; ci++) {
+            putNote(pi, voices[ci], sInP, chord[ci].midi, chord[ci].gate, chord[ci].vel);
+            lastPitch[voices[ci]] = chord[ci].midi;
           }
+        } else {
+          // 7+ 音和弦：前 6 音分配到声道，剩余转为琶音
+          var voices6 = CHORD_VOICES[6];
+          for (var ci2 = 0; ci2 < 6; ci2++) {
+            putNote(pi, voices6[ci2], sInP, chord[ci2].midi, chord[ci2].gate, chord[ci2].vel);
+            lastPitch[voices6[ci2]] = chord[ci2].midi;
+          }
+          // 第 7+ 音转为 P2 琶音
+          var base = chord[5];
+          var o1 = chord[6].midi - base.midi;
+          var o2 = n >= 8 ? (chord[7].midi - base.midi) : 12;
+          if (chans[1].arp) chans[1].arp[sInP] = [o1, o2];
         }
       }
     }
@@ -2361,8 +2610,9 @@
     }
 
     // 音域自适应转调：每个旋律声部按中位音高八度拟合到合适音区，减少 clamp 错八度
-    var VOICE_TARGET = [72, 60, 48]; // P1 主旋律 / P2 和声 / TRI 低音
-    for (var vc = 0; vc < 3; vc++) {
+    var VOICE_TARGET = { 0: 72, 1: 67, 2: 48, 4: 64, 5: 60, 6: 55 }; // P1/P2/TRI/P3/P4/SAW
+    for (var mci = 0; mci < MELODIC_CHANNELS.length; mci++) {
+      var vc = MELODIC_CHANNELS[mci];
       var pitches = [];
       for (var pp = 0; pp < patterns.length; pp++) {
         var arr = patterns[pp].channels[vc].notes;
@@ -2469,18 +2719,24 @@
       { dt: 0, data: midiMeta(0x58, [4, 2, 24, 8]) } // 4/4
     ];
 
+    // 7 声道 → MIDI 通道映射
+    // ch 0=P1→MIDI ch0, ch 1=P2→MIDI ch1, ch 2=TRI→MIDI ch2, ch 3=NSE→MIDI ch9,
+    // ch 4=P3→MIDI ch3, ch 5=P4→MIDI ch4, ch 6=SAW→MIDI ch5
     var meta = [
       { ch: 0, name: 'P1 Square', program: 80 },
       { ch: 1, name: 'P2 Square', program: 80 },
       { ch: 2, name: 'TRI Bass', program: 33 },
-      { ch: 9, name: 'NSE Drums', program: 0 }
+      { ch: 9, name: 'NSE Drums', program: 0 },
+      { ch: 3, name: 'P3 Square', program: 80 },
+      { ch: 4, name: 'P4 Square', program: 80 },
+      { ch: 5, name: 'SAW Lead', program: 81 }
     ];
 
     var tracks = [];
-    for (var c = 0; c < 4; c++) {
+    for (var c = 0; c < CHANNEL_TYPES.length; c++) {
       var events = [];
       events.push({ dt: 0, data: midiMeta(0x03, midiStrBytes(meta[c].name)) });
-      if (c < 3) {
+      if (c !== 3) {
         events.push({ dt: 0, data: [0xC0 | meta[c].ch, meta[c].program] });
       }
 
@@ -2495,13 +2751,13 @@
           if (val === null || val === undefined) continue;
           var gate = (ch.gates && ch.gates[s]) || 1;
           var baseTick = (o * STEP_COUNT + s) * tps;
-          var channel = (c === 3) ? 9 : c;
+          var channel = meta[c].ch;
           var midiNote = (c === 3) ? noiseToGmDrum(val) : val;
           var vel = 100;
           if (ch.vols && ch.vols[s] !== null && ch.vols[s] !== undefined) {
             vel = Math.max(1, Math.round(ch.vols[s] / 15 * 127));
           }
-          var arpArr = (c < 3 && ch.arp && Array.isArray(ch.arp[s])) ? ch.arp[s] : null;
+          var arpArr = (c !== 3 && ch.arp && Array.isArray(ch.arp[s])) ? ch.arp[s] : null;
 
           if (arpArr) {
             // 琶音展开为 3 个子音

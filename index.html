@@ -139,6 +139,8 @@
     --neon-cyan: #00e5ff;
     --neon-purple: #b026ff;
     --neon-yellow: #fff200;
+    --neon-orange: #ff8800;
+    --neon-red: #ff4444;
   }
 
   /* ========== 布局 ========== */
@@ -632,6 +634,9 @@
   .channel-label.ch-1 { color: var(--neon-purple); border-color: #d27fff; box-shadow: 0 0 6px rgba(176, 38, 255, 0.3); }
   .channel-label.ch-2 { color: var(--neon-cyan); border-color: #66ffff; box-shadow: 0 0 6px rgba(0, 229, 255, 0.3); }
   .channel-label.ch-3 { color: var(--neon-green); border-color: var(--neon-green-soft); box-shadow: 0 0 6px var(--neon-green-glow-soft); }
+  .channel-label.ch-4 { color: var(--neon-yellow); border-color: #ffff66; box-shadow: 0 0 6px rgba(255, 242, 0, 0.3); }
+  .channel-label.ch-5 { color: var(--neon-orange); border-color: #ffaa44; box-shadow: 0 0 6px rgba(255, 136, 0, 0.3); }
+  .channel-label.ch-6 { color: var(--neon-red); border-color: #ff8888; box-shadow: 0 0 6px rgba(255, 68, 68, 0.3); }
 
   .pitch-select {
     grid-column: 2;
@@ -691,10 +696,11 @@
   }
   .ch-controls {
     grid-column: 2;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 10px;
-    align-items: center;
+    display: grid;
+    grid-template-columns: 68px 62px 58px 72px;
+    gap: 6px 10px;
+    justify-content: start;
+    align-items: end;
   }
   .ch-field {
     display: flex;
@@ -702,6 +708,11 @@
     align-items: flex-start;
     gap: 2px;
   }
+  /* 工具下拉框按类型纵向对齐成列：音量(黄) · 琶音(青) · 颤音(紫) · 时值(灰白) */
+  .ch-field[data-field="volume"] { grid-column: 1; }
+  .ch-field[data-field="arp"] { grid-column: 2; }
+  .ch-field[data-field="vib"] { grid-column: 3; }
+  .ch-field[data-field="gate"] { grid-column: 4; }
   .ch-field-label {
     font-size: 8px;
     color: var(--y2k-gray-light);
@@ -742,6 +753,9 @@
   .step-cell.active.ch-1 { background: var(--neon-purple); border-color: #d27fff; color: var(--y2k-black); box-shadow: 0 0 6px rgba(176, 38, 255, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
   .step-cell.active.ch-2 { background: var(--neon-cyan); border-color: #66ffff; color: var(--y2k-black); box-shadow: 0 0 6px rgba(0, 229, 255, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
   .step-cell.active.ch-3 { background: var(--neon-green); border-color: var(--neon-green-soft); color: var(--y2k-black); box-shadow: 0 0 6px var(--neon-green-glow), inset 0 0 4px rgba(255, 255, 255, 0.2); }
+  .step-cell.active.ch-4 { background: var(--neon-yellow); border-color: #ffff66; color: var(--y2k-black); box-shadow: 0 0 6px rgba(255, 242, 0, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
+  .step-cell.active.ch-5 { background: var(--neon-orange); border-color: #ffaa44; color: var(--y2k-black); box-shadow: 0 0 6px rgba(255, 136, 0, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
+  .step-cell.active.ch-6 { background: var(--neon-red); border-color: #ff8888; color: var(--y2k-black); box-shadow: 0 0 6px rgba(255, 68, 68, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
   /* 琶音音符：发光脉冲边框 */
   .step-cell.active.has-arp {
     color: var(--y2k-white);
@@ -782,6 +796,9 @@
   .legend-dot.ch-1 { background: var(--neon-purple); box-shadow: 0 0 4px rgba(176, 38, 255, 0.5); }
   .legend-dot.ch-2 { background: var(--neon-cyan); box-shadow: 0 0 4px rgba(0, 229, 255, 0.5); }
   .legend-dot.ch-3 { background: var(--neon-green); box-shadow: 0 0 4px var(--neon-green-glow); }
+  .legend-dot.ch-4 { background: var(--neon-yellow); box-shadow: 0 0 4px rgba(255, 242, 0, 0.5); }
+  .legend-dot.ch-5 { background: var(--neon-orange); box-shadow: 0 0 4px rgba(255, 136, 0, 0.5); }
+  .legend-dot.ch-6 { background: var(--neon-red); box-shadow: 0 0 4px rgba(255, 68, 68, 0.5); }
 
   /* ========== 参数面板 ========== */
   .param-card {
@@ -813,6 +830,9 @@
   .param-channel.ch-1 { color: var(--neon-purple); }
   .param-channel.ch-2 { color: var(--neon-cyan); }
   .param-channel.ch-3 { color: var(--neon-green); }
+  .param-channel.ch-4 { color: var(--neon-yellow); }
+  .param-channel.ch-5 { color: var(--neon-orange); }
+  .param-channel.ch-6 { color: var(--neon-red); }
 
   .param-body { padding: 8px 10px 12px; border-top: 1px dashed var(--y2k-gray); }
   .param-row {
@@ -1139,7 +1159,7 @@
   <div class="hero">
     <span class="hero-badge">NES 2A03 APU</span>
     <h2 data-i18n="hero.title">点格子，写芯片音乐！</h2>
-    <p data-i18n-html="hero.desc">还原 FC 红白机四声道：<strong>P1/P2 方波</strong>（占空比+扫频）· <strong>TRI 三角波</strong>低音 · <strong>NSE 噪声</strong>鼓点<br />多段编排，奏响你的 8-bit 游戏旋律～</p>
+    <p data-i18n-html="hero.desc">扩展 NES 七声道：<strong>P1/P2/P3/P4 方波</strong>（占空比+扫频）· <strong>TRI 三角波</strong>低音 · <strong>NSE 噪声</strong>鼓点 · <strong>SAW 锯齿波</strong>主旋律<br />多段编排，奏响你的 8-bit 游戏旋律～</p>
   </div>
 
   <!-- 播放控制 -->
@@ -1187,7 +1207,7 @@
   <div class="card">
     <div class="card-header">
       <span class="card-title" data-i18n="panel.sequencer">♪ 音序器</span>
-      <span class="card-subtitle" data-i18n="seq.count">4 声道 × 32</span>
+      <span class="card-subtitle" data-i18n="seq.count">7 声道 × 32</span>
     </div>
     <div class="pattern-tabs" id="patternTabs"></div>
     <div class="pattern-toolbar">
@@ -1202,6 +1222,9 @@
       <div class="legend-item"><span class="legend-dot ch-1"></span><span data-i18n="legend.p2">P2 方波</span></div>
       <div class="legend-item"><span class="legend-dot ch-2"></span><span data-i18n="legend.tri">TRI 三角</span></div>
       <div class="legend-item"><span class="legend-dot ch-3"></span><span data-i18n="legend.nse">NSE 噪声</span></div>
+      <div class="legend-item"><span class="legend-dot ch-4"></span><span data-i18n="legend.p3">P3 方波</span></div>
+      <div class="legend-item"><span class="legend-dot ch-5"></span><span data-i18n="legend.p4">P4 方波</span></div>
+      <div class="legend-item"><span class="legend-dot ch-6"></span><span data-i18n="legend.saw">SAW 锯齿</span></div>
     </div>
   </div>
 
@@ -1363,9 +1386,142 @@
         </div>
       </div>
     </details>
-  </div>
 
-  <!-- 编排 -->
+    <details class="param-card">
+      <summary class="param-summary" data-i18n-html="param.square3">方波声道 <span class="param-channel ch-4">P3</span></summary>
+      <div class="param-body">
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.duty">占空比</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="duty" data-channel="4" data-value="0">12.5%</button>
+            <button class="seg-btn" data-param="duty" data-channel="4" data-value="1">25%</button>
+            <button class="seg-btn" data-param="duty" data-channel="4" data-value="2">50%</button>
+            <button class="seg-btn" data-param="duty" data-channel="4" data-value="3">75%</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.volume">音量</span>
+          <input type="range" class="param-range" data-param="vol" data-channel="4" min="0" max="15" value="8" id="vol_4" />
+          <span class="param-value" id="volLabel_4">8</span>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.envelope">包络</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="envMode" data-channel="4" data-value="const" data-i18n="param.env.const">恒定</button>
+            <button class="seg-btn" data-param="envMode" data-channel="4" data-value="decay" data-i18n="param.env.decay">衰减</button>
+            <button class="seg-btn" data-param="envMode" data-channel="4" data-value="loop" data-i18n="param.env.loop">循环</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <label class="sweep-toggle"><input type="checkbox" data-param="sweepOn" data-channel="4" id="sweepOn_4" /> <span data-i18n="param.sweep">频率扫频</span></label>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepPeriod">扫频周期</span>
+          <input type="range" class="param-range" data-param="sweepPeriod" data-channel="4" min="0" max="7" value="0" id="sweepPeriod_4" />
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepDir">扫频方向</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="sweepNegate" data-channel="4" data-value="0" data-i18n="param.sweep.down">降</button>
+            <button class="seg-btn" data-param="sweepNegate" data-channel="4" data-value="1" data-i18n="param.sweep.up">升</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepShift">扫频移位</span>
+          <input type="range" class="param-range" data-param="sweepShift" data-channel="4" min="0" max="7" value="0" id="sweepShift_4" />
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.glide">滑音时间</span>
+          <input type="range" class="param-range" data-param="glideTime" data-channel="4" min="0" max="100" value="0" id="glideTime_4" />
+          <span class="param-value" id="glideTimeLabel_4">0 ms</span>
+        </div>
+        <div class="param-row">
+          <p class="param-note" data-i18n="param.glideNote">滑音：从前一个音符平滑过渡到当前音符，时间越长过渡越慢。</p>
+        </div>
+      </div>
+    </details>
+
+    <details class="param-card">
+      <summary class="param-summary" data-i18n-html="param.square4">方波声道 <span class="param-channel ch-5">P4</span></summary>
+      <div class="param-body">
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.duty">占空比</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="duty" data-channel="5" data-value="0">12.5%</button>
+            <button class="seg-btn" data-param="duty" data-channel="5" data-value="1">25%</button>
+            <button class="seg-btn" data-param="duty" data-channel="5" data-value="2">50%</button>
+            <button class="seg-btn" data-param="duty" data-channel="5" data-value="3">75%</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.volume">音量</span>
+          <input type="range" class="param-range" data-param="vol" data-channel="5" min="0" max="15" value="8" id="vol_5" />
+          <span class="param-value" id="volLabel_5">8</span>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.envelope">包络</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="envMode" data-channel="5" data-value="const" data-i18n="param.env.const">恒定</button>
+            <button class="seg-btn" data-param="envMode" data-channel="5" data-value="decay" data-i18n="param.env.decay">衰减</button>
+            <button class="seg-btn" data-param="envMode" data-channel="5" data-value="loop" data-i18n="param.env.loop">循环</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <label class="sweep-toggle"><input type="checkbox" data-param="sweepOn" data-channel="5" id="sweepOn_5" /> <span data-i18n="param.sweep">频率扫频</span></label>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepPeriod">扫频周期</span>
+          <input type="range" class="param-range" data-param="sweepPeriod" data-channel="5" min="0" max="7" value="0" id="sweepPeriod_5" />
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepDir">扫频方向</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="sweepNegate" data-channel="5" data-value="0" data-i18n="param.sweep.down">降</button>
+            <button class="seg-btn" data-param="sweepNegate" data-channel="5" data-value="1" data-i18n="param.sweep.up">升</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.sweepShift">扫频移位</span>
+          <input type="range" class="param-range" data-param="sweepShift" data-channel="5" min="0" max="7" value="0" id="sweepShift_5" />
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.glide">滑音时间</span>
+          <input type="range" class="param-range" data-param="glideTime" data-channel="5" min="0" max="100" value="0" id="glideTime_5" />
+          <span class="param-value" id="glideTimeLabel_5">0 ms</span>
+        </div>
+        <div class="param-row">
+          <p class="param-note" data-i18n="param.glideNote">滑音：从前一个音符平滑过渡到当前音符，时间越长过渡越慢。</p>
+        </div>
+      </div>
+    </details>
+
+    <details class="param-card">
+      <summary class="param-summary" data-i18n-html="param.sawtooth">锯齿波声道 <span class="param-channel ch-6">SAW</span></summary>
+      <div class="param-body">
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.volume">音量</span>
+          <input type="range" class="param-range" data-param="vol" data-channel="6" min="0" max="15" value="10" id="vol_6" />
+          <span class="param-value" id="volLabel_6">10</span>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.envelope">包络</span>
+          <div class="param-btns">
+            <button class="seg-btn" data-param="envMode" data-channel="6" data-value="const" data-i18n="param.env.const">恒定</button>
+            <button class="seg-btn" data-param="envMode" data-channel="6" data-value="decay" data-i18n="param.env.decay">衰减</button>
+            <button class="seg-btn" data-param="envMode" data-channel="6" data-value="loop" data-i18n="param.env.loop">循环</button>
+          </div>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.glide">滑音时间</span>
+          <input type="range" class="param-range" data-param="glideTime" data-channel="6" min="0" max="100" value="0" id="glideTime_6" />
+          <span class="param-value" id="glideTimeLabel_6">0 ms</span>
+        </div>
+        <div class="param-row">
+          <p class="param-note" data-i18n="param.sawNote">锯齿波声道拥有丰富的谐波，适合主旋律。滑音：从前一个音符平滑过渡到当前音符。</p>
+        </div>
+      </div>
+    </details>
+  </div>
   <div class="card">
     <div class="card-header">
       <span class="card-title" data-i18n="panel.arrange">↻ 歌曲编排</span>
@@ -1402,12 +1558,7 @@
       <span class="card-title" data-i18n="panel.library">💾 存档</span>
       <span class="card-subtitle" id="libraryCount">0 首</span>
     </div>
-    <div id="libraryContainer">
-      <div class="library-empty">
-        <div class="emoji">🎵</div>
-        <p>暂无存档<br />按「保存」存入你的歌曲</p>
-      </div>
-    </div>
+    <div id="libraryContainer"></div>
     <div style="margin-top:10px;">
       <button class="btn btn-secondary" id="exportMidiBtn" style="width:100%;" data-i18n="export.midi">⬇️ 导出 MIDI</button>
     </div>
