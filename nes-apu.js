@@ -28,6 +28,12 @@
     8860.3, 7046.3, 4709.9, 3523.2, 2348.8, 1761.6, 879.9, 440.0
   ];
 
+  // DMC (DPCM) 采样声道：标准 NTSC 16 档速率，rate = fCPU / divisor
+  var DMC_RATE_DIV = [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54];
+  var DMC_RATES = [];
+  for (var _di = 0; _di < DMC_RATE_DIV.length; _di++) DMC_RATES.push(fCPU / DMC_RATE_DIV[_di]);
+  var DMC_SAMPLE_COUNT = 4; // kick / snare / bass / hat
+
   var PULSE_SLOT = 64; // Pulse 每 duty slot 采样数（8*64=512 周期采样）
   var TRI_SLOT = 16;   // Triangle/Sawtooth 每 slot 采样数（32*16=512 周期采样）
 
@@ -37,8 +43,10 @@
   var triangleBuffer = null;
   var sawtoothBuffer = null;
   var noiseBuffers = null; // [mode0, mode1]
+  var dmcBuffers = null;   // DMC 采样 AudioBuffer [kick, snare, bass, hat]
   var pulseBus = null;     // Pulse1+Pulse2+Pulse3+Pulse4+Sawtooth
   var tndBus = null;       // Triangle+Noise
+  var dmcBus = null;       // DMC 采样总线
   var shaper = null;       // 软削波
 
   // ============ 工具 ============
@@ -97,12 +105,81 @@
     return buf;
   }
 
+  // ============ DMC (DPCM) 采样 ============
+  // 程序化合成短采样 → 1-bit delta 编码 → 解码为 AudioBuffer，模拟 NES 采样声道
+  function synthesizeDmcSample(kind) {
+    var SR = 16000;
+    var dur = 0.18;
+    if (kind === 0) dur = 0.18;      // 底鼓
+    else if (kind === 1) dur = 0.16; // 军鼓
+    else if (kind === 2) dur = 0.22; // 贝斯
+    else dur = 0.08;                 // 镲片
+    var n = Math.floor(SR * dur);
+    var pcm = new Float32Array(n);
+    var ph = 0;
+    for (var i = 0; i < n; i++) {
+      var t = i / SR;
+      var env = Math.pow(1 - t / dur, 2.5);
+      if (kind === 0) {
+        // 底鼓：频率从 220Hz 快速滑向 45Hz 的正弦
+        var f = 220 * Math.pow(0.25, t / dur) + 45;
+        ph += 2 * Math.PI * f / SR;
+        pcm[i] = Math.sin(ph) * env;
+      } else if (kind === 1) {
+        // 军鼓：白噪声 + 190Hz 音头
+        ph += 2 * Math.PI * 190 / SR;
+        pcm[i] = ((Math.random() * 2 - 1) * 0.7 + Math.sin(ph) * 0.3) * env;
+      } else if (kind === 2) {
+        // 贝斯：110Hz 三角波，衰减较缓
+        var q = (t * 110) % 1;
+        var tri = q < 0.5 ? (q * 4 - 1) : (3 - q * 4);
+        pcm[i] = tri * 0.9 * (0.35 + 0.65 * env);
+      } else {
+        // 镲片：短促白噪声
+        pcm[i] = (Math.random() * 2 - 1) * env;
+      }
+    }
+    return pcm;
+  }
+
+  function deltaEncode(pcm) {
+    var bits = [];
+    var acc = 64;
+    for (var i = 0; i < pcm.length; i++) {
+      var target = Math.round((pcm[i] + 1) / 2 * 127);
+      if (target > acc) { bits.push(1); acc += 2; if (acc > 127) acc = 127; }
+      else { bits.push(0); acc -= 2; if (acc < 0) acc = 0; }
+    }
+    return bits;
+  }
+
+  function deltaDecode(bits) {
+    var out = new Float32Array(bits.length);
+    var acc = 64;
+    for (var i = 0; i < bits.length; i++) {
+      acc += bits[i] ? 2 : -2;
+      if (acc < 0) acc = 0; else if (acc > 127) acc = 127;
+      out[i] = (acc - 63.5) / 63.5;
+    }
+    return out;
+  }
+
+  function buildDmcBuffer(kind) {
+    var pcm = synthesizeDmcSample(kind);
+    var decoded = deltaDecode(deltaEncode(pcm));
+    var buf = ctx.createBuffer(1, decoded.length, ctx.sampleRate);
+    buf.getChannelData(0).set(decoded);
+    return buf;
+  }
+
   // ============ 混音总线 ============
   function buildMixer() {
     pulseBus = ctx.createGain();
     pulseBus.gain.value = 0.5;
     tndBus = ctx.createGain();
     tndBus.gain.value = 0.35;
+    dmcBus = ctx.createGain();
+    dmcBus.gain.value = 0.6;
 
     var master = ctx.createGain();
     master.gain.value = 1.0;
@@ -118,6 +195,7 @@
 
     pulseBus.connect(master);
     tndBus.connect(master);
+    dmcBus.connect(master);
     master.connect(shaper);
     shaper.connect(ctx.destination);
   }
@@ -138,6 +216,8 @@
     triangleBuffer = buildTriangleBuffer();
     sawtoothBuffer = buildSawtoothBuffer();
     noiseBuffers = [buildNoiseBuffer(0), buildNoiseBuffer(1)];
+    dmcBuffers = [];
+    for (var _d2 = 0; _d2 < DMC_SAMPLE_COUNT; _d2++) dmcBuffers.push(buildDmcBuffer(_d2));
 
     buildMixer();
     return ctx;
@@ -269,6 +349,7 @@
     var freq = 0;
     var baseRate = 0;
     var hasGlide = glideFromMidi != null && glideTime > 0 && glideFromMidi !== pitchValue;
+    var dnat = 0; // DMC 采样的自然播放时长（秒）
 
     if (type === 'noise') {
       var idx = Math.max(0, Math.min(15, pitchValue));
@@ -305,6 +386,22 @@
       gain.gain.linearRampToValueAtTime(0.8, startTime + tfade);
       gain.gain.setValueAtTime(0.8, startTime + duration - tfade);
       gain.gain.linearRampToValueAtTime(0, startTime + duration);
+    } else if (type === 'dmc') {
+      // DMC 采样：one-shot 播放，rate 档决定音高与时长
+      var sidx = Math.max(0, Math.min(DMC_SAMPLE_COUNT - 1, pitchValue | 0));
+      var ridx = Math.max(0, Math.min(15, params.rate | 0));
+      var dmcRate = DMC_RATES[ridx];
+      src.buffer = dmcBuffers[sidx];
+      src.loop = false;
+      src.playbackRate.value = dmcRate / ctx.sampleRate;
+      dnat = dmcBuffers[sidx].length / dmcRate; // 自然播放时长（秒）
+      var dvol = (params.vol != null ? params.vol : 12) / 15;
+      var fadeIn = Math.min(0.003, dnat * 0.1);
+      var fadeOut = Math.min(0.02, dnat * 0.2);
+      gain.gain.setValueAtTime(0, startTime);
+      gain.gain.linearRampToValueAtTime(dvol, startTime + fadeIn);
+      gain.gain.setValueAtTime(dvol, startTime + Math.max(fadeIn, dnat - fadeOut));
+      gain.gain.linearRampToValueAtTime(0, startTime + dnat);
     } else {
       // pulse1 / pulse2 / pulse3 / pulse4 / sawtooth
       var isSaw = (type === 'sawtooth');
@@ -340,11 +437,13 @@
     src.connect(gain);
     if (type === 'triangle' || type === 'noise') {
       gain.connect(tndBus);
+    } else if (type === 'dmc') {
+      gain.connect(dmcBus);
     } else {
       gain.connect(pulseBus);
     }
     src.start(startTime);
-    src.stop(startTime + duration + 0.02);
+    src.stop(startTime + (type === 'dmc' ? dnat + 0.05 : duration + 0.02));
   }
 
   // ============ 导出 ============

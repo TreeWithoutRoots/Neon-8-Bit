@@ -384,6 +384,16 @@
     padding-bottom: 8px;
     border-bottom: 1px dashed var(--y2k-gray);
   }
+  .card summary.card-header { list-style: none; cursor: pointer; }
+  .card summary.card-header::-webkit-details-marker { display: none; }
+  .card summary.card-header::after {
+    content: '▾';
+    margin-left: auto;
+    color: var(--neon-pink);
+    font-size: 12px;
+    text-shadow: 0 0 6px var(--neon-pink-glow);
+  }
+  .card:not([open]) summary.card-header::after { content: '▸'; }
   .card-title {
     font-size: 12px;
     font-weight: 900;
@@ -637,6 +647,7 @@
   .channel-label.ch-4 { color: var(--neon-yellow); border-color: #ffff66; box-shadow: 0 0 6px rgba(255, 242, 0, 0.3); }
   .channel-label.ch-5 { color: var(--neon-orange); border-color: #ffaa44; box-shadow: 0 0 6px rgba(255, 136, 0, 0.3); }
   .channel-label.ch-6 { color: var(--neon-red); border-color: #ff8888; box-shadow: 0 0 6px rgba(255, 68, 68, 0.3); }
+  .channel-label.ch-7 { color: #ff5adf; border-color: #ff9ef0; box-shadow: 0 0 6px rgba(255, 90, 223, 0.35); }
 
   .pitch-select {
     grid-column: 2;
@@ -756,6 +767,7 @@
   .step-cell.active.ch-4 { background: var(--neon-yellow); border-color: #ffff66; color: var(--y2k-black); box-shadow: 0 0 6px rgba(255, 242, 0, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
   .step-cell.active.ch-5 { background: var(--neon-orange); border-color: #ffaa44; color: var(--y2k-black); box-shadow: 0 0 6px rgba(255, 136, 0, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
   .step-cell.active.ch-6 { background: var(--neon-red); border-color: #ff8888; color: var(--y2k-black); box-shadow: 0 0 6px rgba(255, 68, 68, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
+  .step-cell.active.ch-7 { background: #ff5adf; border-color: #ff9ef0; color: var(--y2k-black); box-shadow: 0 0 6px rgba(255, 90, 223, 0.5), inset 0 0 4px rgba(255, 255, 255, 0.2); }
   /* 琶音音符：发光脉冲边框 */
   .step-cell.active.has-arp {
     color: var(--y2k-white);
@@ -799,6 +811,7 @@
   .legend-dot.ch-4 { background: var(--neon-yellow); box-shadow: 0 0 4px rgba(255, 242, 0, 0.5); }
   .legend-dot.ch-5 { background: var(--neon-orange); box-shadow: 0 0 4px rgba(255, 136, 0, 0.5); }
   .legend-dot.ch-6 { background: var(--neon-red); box-shadow: 0 0 4px rgba(255, 68, 68, 0.5); }
+  .legend-dot.ch-7 { background: #ff5adf; box-shadow: 0 0 4px rgba(255, 90, 223, 0.55); }
 
   /* ========== 参数面板 ========== */
   .param-card {
@@ -833,6 +846,7 @@
   .param-channel.ch-4 { color: var(--neon-yellow); }
   .param-channel.ch-5 { color: var(--neon-orange); }
   .param-channel.ch-6 { color: var(--neon-red); }
+  .param-channel.ch-7 { color: #ff5adf; }
 
   .param-body { padding: 8px 10px 12px; border-top: 1px dashed var(--y2k-gray); }
   .param-row {
@@ -1225,14 +1239,15 @@
       <div class="legend-item"><span class="legend-dot ch-4"></span><span data-i18n="legend.p3">P3 方波</span></div>
       <div class="legend-item"><span class="legend-dot ch-5"></span><span data-i18n="legend.p4">P4 方波</span></div>
       <div class="legend-item"><span class="legend-dot ch-6"></span><span data-i18n="legend.saw">SAW 锯齿</span></div>
+      <div class="legend-item"><span class="legend-dot ch-7"></span><span data-i18n="legend.dmc">DMC 采样</span></div>
     </div>
   </div>
 
   <!-- 声道参数 -->
-  <div class="card">
-    <div class="card-header">
+  <details class="card" open>
+    <summary class="card-header">
       <span class="card-title" data-i18n="panel.params">⚙ 声道参数</span>
-    </div>
+    </summary>
 
     <details class="param-card">
       <summary class="param-summary" data-i18n-html="param.square1">方波声道 <span class="param-channel ch-0">P1</span></summary>
@@ -1521,7 +1536,31 @@
         </div>
       </div>
     </details>
-  </div>
+
+    <details class="param-card">
+      <summary class="param-summary" data-i18n-html="param.dmc">采样声道 <span class="param-channel ch-7">DMC</span></summary>
+      <div class="param-body">
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.dmcSample">采样</span>
+          <input type="range" class="param-range" data-param="dmcSample" data-channel="7" min="0" max="3" value="0" id="dmcSample_7" />
+          <span class="param-value" id="dmcSampleLabel_7">0·底鼓</span>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.dmcRate">速率档</span>
+          <input type="range" class="param-range" data-param="dmcRate" data-channel="7" min="0" max="15" value="8" id="dmcRate_7" />
+          <span class="param-value" id="dmcRateLabel_7">8</span>
+        </div>
+        <div class="param-row">
+          <span class="param-label" data-i18n="param.volume">音量</span>
+          <input type="range" class="param-range" data-param="vol" data-channel="7" min="0" max="15" value="12" id="vol_7" />
+          <span class="param-value" id="volLabel_7">12</span>
+        </div>
+        <div class="param-row">
+          <p class="param-note" data-i18n="param.dmcNote">DMC 采样声道：每步触发一个采样，速率档越高音高越高、时长越短。适合鼓点与贝斯。</p>
+        </div>
+      </div>
+    </details>
+  </details>
   <div class="card">
     <div class="card-header">
       <span class="card-title" data-i18n="panel.arrange">↻ 歌曲编排</span>
